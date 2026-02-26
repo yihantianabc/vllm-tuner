@@ -2,7 +2,7 @@ Metadata-Version: 2.4
 Name: vllm-tuner
 Version: 0.1.0
 Summary: An intelligent auto-tuner for vLLM to maximize throughput and minimize latency
-Author: vLLM Tuner Contributors
+Author: Javad Anaraki
 License: Apache-2.0
 Classifier: Development Status :: 3 - Alpha
 Classifier: Intended Audience :: Developers
