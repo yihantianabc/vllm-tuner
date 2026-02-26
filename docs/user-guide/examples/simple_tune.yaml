@@ -1,0 +1,58 @@
+# Simple tuning configuration for single GPU
+# Quick tuning with fewer trials for faster iterations
+
+# Model to tune
+model: "gpt2"
+
+# GPU configuration
+gpu:
+  device_ids: [0]
+  count: 1
+
+# Multi-objective optimization weights (must sum to 100)
+objectives:
+  throughput: 60
+  latency: 30
+  memory: 10
+
+# Tuning constraints
+constraints:
+  max_latency_ms: null
+  max_memory_utilization: 0.9
+  throughput_min: null
+
+# Custom search space overrides (null = use default values)
+search_space:
+  batch_size: null
+  max_num_batched_tokens: null
+  max_num_seqs: null
+  gpu_memory_utilization: null
+  tensor_parallel_size: null
+  pipeline_parallel_size: null
+
+# Benchmark workload configuration
+workload:
+  name: "alpaca"
+  dataset_name: "tatsu-lab/alpaca"
+  sample_size: 50
+  prompt_length_distribution: "auto"
+  warmup_requests: 3
+  concurrent_requests: 5
+  max_tokens: 256
+
+# Baseline generation (before optimization)
+baseline:
+  enabled: true
+  num_requests: 500
+  max_tokens: 256
+
+# Optuna study settings
+study:
+  min_trials: 10
+  timeout_minutes: 30
+  storage_backend: "sqlite:///studies/optuna.db"
+  prune_enabled: true
+  n_startup_trials: 3
+
+# Additional arguments to pass to vLLM server
+vllm_args: {}

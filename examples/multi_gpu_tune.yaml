@@ -1,0 +1,53 @@
+# Multi-GPU tuning configuration
+# Optimized for larger models with multiple GPUs
+
+# Model to tune
+model: "meta-llama/Llama-2-7b-hf"
+
+# GPU configuration
+gpu:
+  device_ids: [0, 1, 2, 3]
+  count: 4
+
+# Multi-objective optimization weights (must sum to 100)
+objectives:
+  throughput: 70
+  latency: 20
+  memory: 10
+
+# Tuning constraints
+constraints:
+  max_latency_ms: 200
+  max_memory_utilization: 0.95
+  throughput_min: null
+
+# Custom search space overrides
+search_space:
+  batch_size: [32, 256]
+  max_num_batched_tokens: [4096, 16384]
+  max_num_seqs: [64, 512]
+  gpu_memory_utilization: [0.8, 0.95]
+  tensor_parallel_size: [1, 2, 4]
+  pipeline_parallel_size: [1, 2]
+
+# Benchmark workload configuration
+workload:
+  name: "alpaca"
+  dataset_name: "tatsu-lab/alpaca"
+  sample_size: 200
+  prompt_length_distribution: "weighted"
+  warmup_requests: 10
+  concurrent_requests: 20
+
+# Optuna study settings
+study:
+  min_trials: 50
+  timeout_minutes: 120
+  storage_backend: "sqlite:///studies/optuna.db"
+  prune_enabled: true
+  n_startup_trials: 10
+
+# Additional arguments to pass to vLLM server
+vllm_args:
+  dtype: float16
+  trust-remote-code: true

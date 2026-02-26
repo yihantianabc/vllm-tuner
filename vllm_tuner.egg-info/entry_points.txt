@@ -1,0 +1,2 @@
+[console_scripts]
+vllm-tuner = src.cli.main:app
