@@ -1,6 +1,6 @@
 # vLLM Auto-Tuner
 
-An intelligent auto-tuner for vLLM that automatically monitors GPU metrics, uses Bayesian optimization to tune parameters (batch_size, max_num_batched_tokens, max_num_seqs, gpu_memory_utilization), and strives to maximize throughput while minimizing latency, respecting user-provided constraints.
+An intelligent auto-tuner for vLLM that automatically monitors GPU metrics, uses Bayesian optimization to tune parameters (`batch_size`, `max_num_batched_tokens`, `max_num_seqs`, `gpu_memory_utilization`), and strives to maximize throughput while minimizing latency, respecting user-provided constraints.
 
 ## Features
 
@@ -12,39 +12,16 @@ An intelligent auto-tuner for vLLM that automatically monitors GPU metrics, uses
 - **Rich Reporting**: Plotly interactive HTML reports with trial progression, Pareto front, and GPU telemetry
 - **Extensibility**: Custom workloads and plugins for specific deployment scenarios
 
-## Quick Start
-
-### Basic Tuning
-```bash
-# Install
-pip install -e ".[dev]"
-pip install vllm
-
-# Run tuning study
-vllm-tuner tune --config config/default.yaml --study-name my_study
-
-# Generate report
-vllm-tuner report --study-name my_study --format html
-```
-
-### Custom Model
-```bash
-vllm-tuner tune --model gpt2 --gpu-count 1 --study-name gpt2_tune
-```
-
-### Multi-GPU Tuning
-```bash
-vllm-tuner tune --config examples/multi_gpu_tune.yaml --study-name llama2_7b_tune
-```
-
 ## Installation
 
 ```bash
-# Install dependencies
-pip install -e ".[dev]"
+# Install dependencies using uv
+uv venv --seed --python 3.10
+source .venv/bin/activate
+uv pip install -e .
 
 # Install vLLM
-pip install vllm
+uv pip install vllm --torch-backend=auto
 ```
 
 **Requirements:**
@@ -53,7 +30,7 @@ pip install vllm
 
 ## Configuration
 
-Configuration is done via YAML files. Key settings:
+Configuration is done via YAML file under `config/default.yaml`. Key settings:
 
 ### Multi-Objective Weights (must sum to 100)
 ```yaml
@@ -77,6 +54,19 @@ workload:
   dataset_name: "tatsu-lab/alpaca"  # HF dataset
   sample_size: 100                 # Number of prompts
   concurrent_requests: 10          # Concurrent clients
+```
+
+## Quick Start
+
+### Basic Tuning
+```bash
+# Run tuning study
+vllm-tuner tune --config config/default.yaml --study-name my_study
+```
+
+### Multi-GPU Tuning
+```bash
+vllm-tuner tune --config examples/multi_gpu_tune.yaml --study-name llama2_7b_tune
 ```
 
 ## CLI Commands
