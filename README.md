@@ -1,5 +1,9 @@
 # vLLM-Tuner
 
+<p align="center">
+    <img src="docs/logo.png" alt="vllm-tuner" style="width:50%; height:auto;">
+</p>
+
 An intelligent tuner for vLLM that automatically monitors GPU metrics, uses Bayesian optimization to tune parameters (`batch_size`, `max_num_batched_tokens`, `max_num_seqs`, `gpu_memory_utilization`) to maximize throughput while minimizing latency and balancing memory, respecting user-provided constraints.
 
 ## Features
