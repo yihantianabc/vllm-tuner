@@ -1,7 +1,9 @@
 # vLLM-Tuner
 
+---
+
 <p align="center">
-    <img src="docs/logo.png" alt="vllm-tuner" style="width:50%; height:auto;">
+    <img src="docs/logo.png" alt="vllm-tuner" style="width:30%; height:auto;">
 </p>
 
 An intelligent tuner for vLLM that automatically monitors GPU metrics, uses Bayesian optimization to tune parameters (`batch_size`, `max_num_batched_tokens`, `max_num_seqs`, `gpu_memory_utilization`) to maximize throughput while minimizing latency and balancing memory, respecting user-provided constraints.
@@ -89,6 +91,9 @@ studies/my_study/
 └── reports/
     └── report.html           # Interactive Plotly report
 ```
+And the final report is as follows:
+
+![report_screenshot.png](docs/report_screenshot.png)
 
 ## Documentation
 
