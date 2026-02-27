@@ -4,20 +4,7 @@
 
 vLLM-Tuner consists of several coordinated components:
 
-```mermaid
-graph TD
-    A[CLI typer] --> B[StudyManager]
-    B --> C[VLLMOptimizer Optuna]
-    B --> D[Launcher Popen]
-    B --> E[GPUCollector NVML]
-    C --> F[Benchmarker]
-    D --> G[vLLM Server]
-    E --> G
-    F --> G
-    E --> H[VLLMTelemetryParser]
-    H --> I[HTMLReportGenerator]
-    J[BaselineRunner] --> B
-```
+![Components](components.png)
 
 ## Components
 
@@ -45,8 +32,3 @@ graph TD
 ### Reporting (src/reporting/)
 - `html.py` - HTML report generation
 - `export.py` - Configuration export
-
-## See Also
-
-- [Baseline Integration](baseline-integration.md) - Baseline system architecture
-- [Tuning Engine](tuning-engine.md) - How optimization works

@@ -50,4 +50,3 @@ study:
 # Additional arguments to pass to vLLM server
 vllm_args:
   dtype: float16
-  trust-remote-code: true

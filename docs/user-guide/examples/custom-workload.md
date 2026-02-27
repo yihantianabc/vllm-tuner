@@ -232,12 +232,3 @@ Error: `Not enough prompts in dataset: found X, need Y`
 workload:
   sample_size: 50  # Reduce if dataset is small
 ```
-
-## See Also
-
-- [Configuration Guide](../configuration.md) - Workload configuration
-- [Installation](../installation.md) - Setup vLLM-Tuner
-- [Dataset Sources](../../architecture/baseline-integration.md) - Data loading process
-'''
-echo "Created: docs/user-guide/examples/custom-workload.md"
-echo "Files created!"

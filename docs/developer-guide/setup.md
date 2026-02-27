@@ -14,10 +14,10 @@ git clone https://github.com/your-org/vllm-tuner.git
 cd vllm-tuner
 
 # Install with dev dependencies
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 
 # Install vLLM (for integration tests)
-pip install vllm
+uv pip install vllm --torch-backend=auto
 ```
 
 ## Verify Setup
@@ -53,8 +53,3 @@ Configure:
 - Enable Black formatting
 - Enable Ruff linting
 - Configure test runner
-
-## See Also
-
-- [Testing Guide](testing.md) - Testing procedures
-- [AGENTS.md](../../AGENTS.md) - Code style guidelines

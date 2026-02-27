@@ -5,8 +5,8 @@ This file contains guidelines for agentic coding assistants working on the vllm-
 ## Build, Lint, and Test Commands
 
 ### Installation
-- **Install with dev dependencies**: `pip install -e ".[dev]"`
-- **Install vLLM**: `pip install vllm` (required for integration tests)
+- **Install with dev dependencies**: `uv pip install -e ".[dev]"`
+- **Install vLLM**: `uv pip install vllm` (required for integration tests)
 
 ### Code Quality
 - **Format code**: `black src/ tests/`

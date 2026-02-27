@@ -1,6 +1,6 @@
 # User Guide
 
-Welcome to the vLLM-Tuner user guide. This guide helps you get started with tuning vLLM models for optimal performance.
+This guide helps you get started with tuning vLLM models for optimal performance.
 
 ## What is vLLM-Tuner?
 
@@ -14,11 +14,6 @@ Using Optuna's Bayesian optimization, it automatically searches the parameter sp
 ## Quick Start
 
 ### 1. Install
-
-```bash
-pip install -e ".[dev]"
-pip install vllm
-```
 
 See [Installation](installation.md) for detailed instructions.
 
@@ -59,12 +54,6 @@ Save this as `my_config.yaml`.
 vllm-tuner tune --config my_config.yaml --study-name my_first_study
 ```
 
-### 4. Generate a Report
-
-```bash
-vllm-tuner report --study-name my_first_study --format html
-```
-
 Open the generated HTML report to see the optimization results.
 
 ## Core Concepts
@@ -91,6 +80,8 @@ The parameter ranges that vLLM-Tuner will explore:
 - `batch_size`: How many tokens to process together
 - `max_num_seqs`: Maximum concurrent sequences per batch
 - `gpu_memory_utilization`: Fraction of GPU memory to use
+- `tensor_parallel_size`: Parallelizing the computation of transformer layers across multiple GPUs 
+- `pipeline_parallel_size`: Number of model segments distributed across different GPUs
 
 ### Baseline Generation
 
@@ -165,24 +156,6 @@ Export the best configuration:
 vllm-tuner export --study-name my Study --format yaml > best_config.yaml
 ```
 
-## Next Steps
-
-### For Running Studies
-
-- [Configuration](configuration.md) - Learn all configuration options
-- [CLI Commands](cli-commands.md) - Command-line reference
-- [Examples](examples/) - Ready-to-use examples
-
-### For Understanding Results
-
-- [HTML Reports](reports/html-reports.md) - Interactive report features
-- [Metrics Explained](reports/metrics-explained.md) - What each metric means
-- [Baseline Comparison](reports/baseline-comparison.md) - Comparing with defaults
-
-### For Custom Workloads
-
-- [Custom Workload Guide](examples/custom-workload.md) - Use your own dataset
-
 ## Best Practices
 
 ### Start Small
@@ -211,32 +184,8 @@ Study data persists in `studies/<study_name>/optuna.db`. You can:
 - Compare multiple studies
 - Export best configurations
 
-## Troubleshooting
-
-### Study Running Slow?
-
-- Reduce `sample_size` and `min_trials`
-- Use fewer concurrent requests
-- Reduce dataset size
-
-### Trials Failing?
-
-- Check vLLM logs in the study directory
-- Verify your model is accessible
-- Ensure sufficient GPU memory (try lower `gpu_memory_utilization`)
-
-### Poor Results?
-
-- Verify workload matches your real usage
-- Check that constraints are realistic
-- Increase number of trials
-
 ## Getting Help
 
 - [Troubleshooting](../troubleshooting/common-issues.md) - Common problems
 - [Examples](examples/) - Working examples
 - [Developer Guide](../developer-guide/) - For advanced users
-
----
-
-**Next:** [Installation](installation.md)

@@ -55,4 +55,5 @@ study:
   n_startup_trials: 3
 
 # Additional arguments to pass to vLLM server
-vllm_args: {}
+vllm_args:
+  dtype: float16

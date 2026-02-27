@@ -11,7 +11,7 @@ ModuleNotFoundError: No module named 'vllm'
 
 **Solution:**
 ```bash
-pip install vllm
+uv pip install vllm --torch-backend=auto
 ```
 
 ### Pydantic Validation Error
@@ -63,7 +63,7 @@ studies/<study_name>/logs/vllm_trial_0.log
 **Common causes:**
 - Not enough GPU memory - reduce gpu_memory_utilization
 - Model too large for GPU - use smaller model
-- Missing dependencies - `pip install vllm`
+- Missing dependencies - `uv pip install vllm --torch-backend=auto`
 
 ### Benchmark Fails (400 Bad Request)
 
@@ -93,11 +93,3 @@ Throughput/latency stays constant across trials.
 - Enable pruning to stop bad trials early
 - Check for OOM errors in logs
 - Increase warmup_requests
-
-## Summary
-
-See [OOM Errors](oom-errors.md) for detailed memory issues.
-
-See [Configuration](../user-guide/configuration.md) for adjusting settings.
-
-See [Examples](../user-guide/examples/) for working examples.

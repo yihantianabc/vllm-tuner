@@ -58,8 +58,3 @@ List all available studies.
 ```bash
 vllm-tuner list-studies
 ```
-
-## See Also
-
-- [Configuration](configuration.md) - Config file format
-- [Examples](../user-guide/examples/) - Example configurations

@@ -66,9 +66,4 @@ study:
 # Additional vLLM Args
 vllm_args:
   max-model-len: 1024
-  gpu-memory-utilization: 0.6
 ```
-
-See [CLI Commands](cli-commands.md) for using configs with CLI.
-See [Examples](../user-guide/examples/) for example configurations.
-See [Developer API Reference](../developer-guide/api-reference.md) for Pydantic models.

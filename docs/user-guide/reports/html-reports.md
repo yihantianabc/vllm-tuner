@@ -14,7 +14,7 @@ Best Configuration Metrics
 
 ### Parameters Table
 
-- All vLLM parameters from best trial
+- vLLM parameters from best trial
 - Batch size, max_num_seqs, gpu_memory_utilization, etc.
 - Easy to copy-paste for reuse
 
@@ -69,9 +69,3 @@ Report location: `reports/<study_name>/report.html`
 Metrics are saved in:
 - `studies/<study_name>/configs/summary.json` - Summary and best trial
 - `studies/<study_name>/configs/trials.json` - All trial data
-
-## See Also
-
-- [Metrics Explained](metrics-explained.md) - What each metric means
-- [Baseline Comparison](baseline-comparison.md) - How baseline comparison works
-- [Architecture](../architecture/) - How reports are generated

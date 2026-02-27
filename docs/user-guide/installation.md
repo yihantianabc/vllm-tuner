@@ -15,7 +15,7 @@ This guide covers installing vLLM-Tuner and its dependencies.
 
 - **Python**: 3.10, 3.11, or 3.12
 - **RAM**: 16GB or more
-- **GPU**: Recent NVIDIA GPU with at least 8GB VRAM
+- **GPU**: Recent NVIDIA GPU with at least 4GB VRAM
 - **Disk**: 10GB or more free space
 
 ## Installation Steps
@@ -34,6 +34,10 @@ cd /path/to/vllm-tuner
 ### Step 2: Install with Development Dependencies
 
 ```bash
+# Create and activate uv environment
+uv venv --seed --python 3.10
+source .venv/bin/activate
+
 # Install with all dev tools
 pip install -e ".[dev]"
 
@@ -51,17 +55,17 @@ The `[dev]` extra includes:
 vLLM is required to run tuning studies:
 
 ```bash
-pip install vllm
+uv pip install vllm --torch-backend=auto
 ```
 
 For specific CUDA versions (optional):
 
 ```bash
 # CUDA 12.1
-pip install vllm --extra-index-url https://download.pytorch.org/whl/cu121
+uv pip install vllm --extra-index-url https://download.pytorch.org/whl/cu121
 
 # CUDA 12.4
-pip install vllm --extra-index-url https://download.pydantic.org/whl/cu124
+uv pip install vllm --extra-index-url https://download.pydantic.org/whl/cu124
 ```
 
 ### Step 4: Verify Installation
@@ -79,72 +83,16 @@ print(f'✓ vLLM {vllm.__version__} installed')
 "
 ```
 
-## Installation Methods
-
-### Method 1: Pip Install (Recommended)
-
-Install from local directory:
-
-```bash
-cd /path/to/vllm-tuner
-pip install -e ".[dev]"
-pip install vllm
-```
-
-### Method 2: Virtual Environment (Best Practice)
-
-Create isolated environment:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\\Scripts\\activate
-
-pip install -e ".[dev]"
-pip install vllm
-```
-
-### Method 3: Docker (For Production)
-
-Create Dockerfile:
-
-```dockerfile
-FROM python:3.12-slim
-
-WORKDIR /app
-COPY . .
-
-RUN apt-get update && apt-get install -y \
-    python3.12-venv \
-    python3.12-dev \
-    cuda-runtime-12-1 \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-RUN pip install -e ".[dev]"
-RUN pip install vllm
-
-CMD ["bash"]
-```
-
-Build and run:
-
-```bash
-docker build -t vllm-tuner .
-docker run --gpus all vllm-tuner
-```
-
 ## Dependency Installation Issues
 
 ### Issue: No module named 'pynvml'
 
 ```bash
 # Ubuntu/Debian
-sudo apt-get install python3-pynvml
+uv pip install pynvml
 
 # Then reinstall
-pip install -e ".[dev]"
+uv pip install -e .
 ```
 
 ### Issue: vLLM installation fails
@@ -155,17 +103,10 @@ nvidia-smi
 nvcc --version
 
 # Install PyTorch with correct CUDA version first
-pip install torch
+uv pip install torch
 
 # Then install vLLM
-pip install vllm
-```
-
-### Issue: Virtual environment creation fails
-
-```bash
-# Ubuntu/Debian
-sudo apt install python3.12-venv
+uv pip install vllm --torch-backend=auto
 ```
 
 ## Verification
@@ -232,54 +173,6 @@ pip uninstall vllm-tuner
 deactivate
 rm -rf .venv
 ```
-
-## Next Steps
-
-- [Configuration Guide](configuration.md) - Create your first config file
-- [CLI Commands](cli-commands.md) - Learn available commands
-- [User Guide Overview](index.md) - Back to user guide
-- [Developer Setup](../developer-guide/setup.md) - Development environment
-
-## Troubleshooting
-
-### Issue: "找不到模块 named" (Module not found)
-
-**Solution:**
-```bash
-pip install -e ".[dev]"
-```
-
-This installs all dependencies including optuna, pydantic, etc.
-
-### Issue: vLLM not found
-
-**Solution:**
-```bash
-pip install vllm
-```
-
-### Issue: CUDA out of memory during install
-
-**Solution:**
-- Install minimal version first: `pip install vllm --no-deps`
-- Then install dependencies separately
-- Or use system package manager: `conda install -c nvidia vllm`
-
-### Issue: Tests fail after installation
-
-**Solution:**
-```bash
-# Reinstall dev dependencies
-pip install -e ".[dev]"
-
-# Check pytest version
-pytest --version
-
-# If pytest < 7.4.0, upgrade:
-pip install pytest==7.4.0
-```
-
-See [Common Issues](../troubleshooting/common-issues.md) for more troubleshooting help.
 
 ## See Also
 

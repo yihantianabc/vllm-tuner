@@ -1,6 +1,6 @@
 # vLLM-Tuner Documentation
 
-Welcome to the vLLM-Tuner documentation hub. This documentation covers everything from quick start to advanced features for both users and developers.
+This documentation covers everything from quick start to advanced features for both users and developers.
 
 ## 📚 Documentation Guide
 
@@ -39,70 +39,12 @@ Welcome to the vLLM-Tuner documentation hub. This documentation covers everythin
 ### Architecture
 
 - [Architecture Overview](architecture/index.md) - System design and components
-- [Baseline Integration](architecture/baseline-integration.md) - Baseline system architecture
 - [Tuning Engine](architecture/tuning-engine.md) - How optimization works
 
 ### Troubleshooting
 
 - [Common Issues](troubleshooting/common-issues.md) - Common problems and solutions
 - [OOM Errors](troubleshooting/oom-errors.md) - Handling out-of-memory errors
-
-## 🚀 Quick Links
-
-### For New Users
-- [Quick Start](user-guide/index.md#quick-start)
-- [Installation](user-guide/installation.md)
-- [First Tuning Study](user-guide/examples/README.md)
-
-### For Existing Users
-- [Advanced Configuration](user-guide/configuration.md)
-- [Examples](user-guide/examples/)
-- [Understanding Reports](user-guide/reports/)
-
-### For Developers
-- [Development Setup](developer-guide/setup.md)
-- [Running Tests](developer-guide/testing.md)
-- [Contributing](developer-guide/contributing.md)
-
-## 📖 External Resources
-
-- [vLLM Documentation](https://docs.vllm.ai/) - Official vLLM documentation
-- [Optuna Documentation](https://optuna.readthedocs.io/) - Bayesian optimization by Preferred Networks
-- [Pydantic Documentation](https://docs.pydantic.dev/) - Data validation using Python type annotations
-- [Plotly Documentation](https://plotly.com/python/) - Python graphing library for HTML reports
-
-## 🤝 Contributing to Documentation
-
-This documentation is open source and we welcome contributions! See the [Contributing Guide](developer-guide/contributing.md) for details on how to improve the documentation.
-
-## 🔍 Finding Information
-
-### By Topic
-
-- **Configuration**: [Configuration](user-guide/configuration.md), [Examples](user-guide/examples/)
-- **Running Studies**: [CLI Commands](user-guide/cli-commands.md), [Examples](user-guide/examples/)
-- **Understanding Results**: [Reports](user-guide/reports/)
-- **Development**: [Developer Guide](developer-guide/)
-- **Troubleshooting**: [Troubleshooting](troubleshooting/)
-- **Architecture**: [Architecture](architecture/)
-
-### By User Type
-
-- **End Users**: Start with [User Guide](user-guide/index.md)
-- **Developers**: Start with [Developer Guide](developer-guide/index.md)
-- **System Integrators**: See [Architecture](architecture/) and [API Reference](developer-guide/api-reference.md)
-
-### Common Tasks
-
-| Task | Documentation |
-|------|---------------|
-| Install vLLM-Tuner | [Installation](user-guide/installation.md) |
-| Run your first study | [User Guide → Examples](user-guide/examples/) |
-| Configure optimization | [Configuration](user-guide/configuration.md) |
-| Generate reports | [Reports](user-guide/reports/) |
-| Setup development env | [Developer Setup](developer-guide/setup.md) |
-| Write tests | [Testing Guide](developer-guide/testing.md) |
-| Contribute code | [Contributing](developer-guide/contributing.md) |
 
 ## 📝 Documentation Feedback
 

@@ -85,8 +85,3 @@ sudo dd if=/dev/zero bs=1M count=16384 of=/swapfile
 sudo chmod 600 /swapfile
 sudo swapon /swapfile
 ```
-
-## See Common Issues
-
-- [Common Issues](common-issues.md) - Other troubleshooting
-- [Configuration](../user-guide/configuration.md) - Reduce memory settings

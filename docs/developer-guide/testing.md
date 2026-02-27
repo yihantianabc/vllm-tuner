@@ -39,8 +39,3 @@ ruff check src/ tests/ --fix
 # Type checking
 mypy src/
 ```
-
-## See Also
-
-- [Setup](setup.md) - Development setup
-- [AGENTS.md](../../AGENTS.md) - Code standards

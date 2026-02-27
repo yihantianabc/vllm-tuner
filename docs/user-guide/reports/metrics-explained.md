@@ -22,7 +22,7 @@
 **Example:**
 - Baseline: 50ms
 - Optimized: 35ms
-- Improvement: -30% (30% faster)
+- Improvement: +30% (30% faster)
 
 ### P95/P99 Latency (ms)
 
@@ -35,18 +35,6 @@
 - P99: 120ms (99% of requests < 120ms)
 
 ## Secondary Metrics
-
-### Peak Memory (MB)
-
-**Definition:** Maximum GPU memory used during benchmark
-
-Lower values indicate more room for larger batches or concurrent requests.
-
-### Average Memory (MB)
-
-**Definition:** Memory usage averaged over entire benchmark
-
-Shows typical memory usage during normal operation.
 
 ### Average Memory Utilization
 
@@ -76,18 +64,8 @@ Higher values indicate GPU is working efficiently.
 (baseline_latency - best_latency) / baseline_latency * 100%
 ```
 
-**Note:** Negative value means better (faster)
-
 ### Memory Delta
 
 ```
 (best_memory - baseline_memory) / baseline_memory * 100%
 ```
-
-**Note:** Negative value means better (less memory)
-
-## See Also
-
-- [HTML Reports](html-reports.md) - Interactive report features
-- [Baseline Comparison](baseline-comparison.md) - Using baseline comparisons
-- [Configuration](../configuration.md) - Tuning metrics
