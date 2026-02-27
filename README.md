@@ -1,7 +1,5 @@
 # vLLM-Tuner
 
----
-
 <p align="center">
     <img src="docs/logo.png" alt="vllm-tuner" style="width:30%; height:auto;">
 </p>
