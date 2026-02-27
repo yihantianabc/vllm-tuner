@@ -57,8 +57,3 @@ avg_latency_ms = total_latency_ms / num_completed
 ```python
 memory_utilization = avg_memory_mb / total_gpu_memory_mb
 ```
-
-## See Also
-
-- [Architecture Overview](index.md) - System design
-- [Configuration](../user-guide/configuration.md) - Search space definition
