@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "An intelligent auto-tuner for vLLM to maximize throughput, minimize latency and memory"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
+license = {text = "MIT license"}
 authors = [
     {name = "Javad Anaraki"}
 ]
