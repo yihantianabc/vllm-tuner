@@ -54,9 +54,11 @@ search_space:
 ```yaml
 workload:
   dataset_name: "tatsu-lab/alpaca"  # HF dataset
-  sample_size: 100                 # Number of prompts
-  concurrent_requests: 10          # Concurrent clients
+  sample_size: 100                  # Number of prompts
+  concurrent_requests: 10           # Concurrent clients
 ```
+
+Store the config file under `configs` folder.
 
 ## Run
 
@@ -64,11 +66,6 @@ workload:
 ```bash
 # Run tuning study
 vllm-tuner tune --config config/default.yaml --study-name my_study
-```
-
-### Multi-GPU Tuning
-```bash
-vllm-tuner tune --config examples/multi_gpu_tune.yaml --study-name llama2_7b_tune
 ```
 
 ## Output Structure
