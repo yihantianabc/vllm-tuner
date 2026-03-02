@@ -92,7 +92,7 @@ print(f'✓ vLLM {vllm.__version__} installed')
 uv pip install pynvml
 
 # Then reinstall
-uv pip install -e .
+uv pip install git+https://github.com/jranaraki/vllm-tuner
 ```
 
 ### Issue: vLLM installation fails

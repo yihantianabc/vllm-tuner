@@ -24,7 +24,7 @@ uv venv --seed --python 3.10
 source .venv/bin/activate
 
 # Install dependencies
-uv pip install -e .
+uv pip install git+https://github.com/jranaraki/vllm-tuner
 
 # Install vLLM
 uv pip install vllm --torch-backend=auto
@@ -32,7 +32,7 @@ uv pip install vllm --torch-backend=auto
 
 ## Configuration
 
-Configuration is done via YAML file under `config/default.yaml`, and here are the key settings:
+Configuration is done via YAML file, see [default.yaml](config/default.yaml), and here are the key settings:
 
 ### Multi-Objective Weights (must sum to 100)
 ```yaml
