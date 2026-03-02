@@ -1,6 +1,7 @@
 """Configuration models using Pydantic for validation."""
 
-from typing import Optional, List, Literal
+from typing import Optional, List
+
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from pydantic_settings import BaseSettings
 

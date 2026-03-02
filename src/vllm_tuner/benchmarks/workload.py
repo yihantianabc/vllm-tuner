@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 
-from ..config.models import WorkloadConfig
+from vllm_tuner.config.models import WorkloadConfig
 
 
 class Workload(ABC):

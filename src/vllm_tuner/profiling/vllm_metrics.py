@@ -1,9 +1,8 @@
 """Collect vLLM-specific metrics during benchmarking."""
 
 import logging
-from typing import Dict, Any, Optional
 from datetime import datetime
-import time
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 

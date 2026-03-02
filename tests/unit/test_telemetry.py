@@ -1,9 +1,8 @@
 """Unit tests for telemetry parsing."""
 
-import pytest
 from pathlib import Path
 
-from src.vllm.telemetry import VLLMTelemetryParser, parse_vllm_logs, detect_oom_from_logs
+from vllm_tuner.vllm.telemetry import VLLMTelemetryParser, parse_vllm_logs, detect_oom_from_logs
 
 
 def test_telemetry_parser_empty_logs():

@@ -1,8 +1,8 @@
 """Configuration validation and YAML parsing."""
 
-import yaml
 from pathlib import Path
-from typing import Optional
+
+import yaml
 from pydantic import ValidationError
 
 from .models import TuningConfig, TunerSettings

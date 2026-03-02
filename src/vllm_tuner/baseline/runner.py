@@ -21,11 +21,13 @@ import yaml
 try:
     from datasets import load_dataset
 except ImportError:
-    raise ImportError("datasets package is required. Install with: pip install datasets")
+    raise ImportError(
+        "datasets package is required. Install with: pip install datasets"
+    )
 
-from src.config.models import TuningConfig
-from src.profiling.gpu_collector import GPUCollector
-from src.profiling.vllm_metrics import VLLMMetricsTracker
+from vllm_tuner.config.models import TuningConfig
+from vllm_tuner.profiling.gpu_collector import GPUCollector
+from vllm_tuner.profiling.vllm_metrics import VLLMMetricsTracker
 
 logger = logging.getLogger(__name__)
 
@@ -195,11 +197,15 @@ class VLLMBaselineRunner:
                         try:
                             response = await client.get(f"{self.base_url}{endpoint}")
                             if response.status_code == 200:
-                                logger.info(f"vLLM server ready at {self.base_url}{endpoint}")
+                                logger.info(
+                                    f"vLLM server ready at {self.base_url}{endpoint}"
+                                )
                                 return True
                         except httpx.HTTPStatusError as e:
                             if e.response.status_code != 404:
-                                logger.debug(f"Health check {endpoint}: {e.response.status_code}")
+                                logger.debug(
+                                    f"Health check {endpoint}: {e.response.status_code}"
+                                )
             except (httpx.ConnectError, httpx.ConnectTimeout):
                 pass
 
@@ -285,7 +291,9 @@ class VLLMBaselineRunner:
         }
 
         try:
-            async with client.stream("POST", url, json=payload, timeout=300) as response:
+            async with client.stream(
+                "POST", url, json=payload, timeout=300
+            ) as response:
                 response.raise_for_status()
 
                 first_chunk_time = None
@@ -346,7 +354,9 @@ class VLLMBaselineRunner:
             async def execute_request(prompt: str, idx: int):
                 request_id = f"req_{idx}"
                 async with semaphore:
-                    return await self._send_request(prompt, client, metrics_tracker, request_id)
+                    return await self._send_request(
+                        prompt, client, metrics_tracker, request_id
+                    )
 
             tasks = [execute_request(prompt, i) for i, prompt in enumerate(prompts)]
             results = await asyncio.gather(*tasks, return_exceptions=False)
@@ -423,7 +433,8 @@ class VLLMBaselineRunner:
                     else 0
                 ),
                 "average_gpu_utilization": (
-                    sum(self.metrics.gpu_util_samples) / len(self.metrics.gpu_util_samples)
+                    sum(self.metrics.gpu_util_samples)
+                    / len(self.metrics.gpu_util_samples)
                     if self.metrics.gpu_util_samples
                     else 0
                 ),
@@ -510,7 +521,9 @@ Generated: {self.metrics.timestamp}
 
             prompts = self._load_prompts()
             warmup_prompts = prompts[: self.warmup_requests]
-            main_prompts = prompts[self.warmup_requests : self.warmup_requests + self.num_requests]
+            main_prompts = prompts[
+                self.warmup_requests : self.warmup_requests + self.num_requests
+            ]
 
             self.monitoring_task = asyncio.create_task(self._monitor_gpu(stop_event))
 

@@ -7,16 +7,19 @@ from typing import List, Dict, Any, Optional
 try:
     from datasets import load_dataset
 except ImportError:
-    raise ImportError("datasets package is required. Install with: pip install datasets")
+    raise ImportError(
+        "datasets package is required. Install with: pip install datasets"
+    )
 
 from transformers import AutoTokenizer
 
-from .workload import Workload
-from ..config.models import WorkloadConfig
+from vllm_tuner.benchmarks.workload import Workload
+from vllm_tuner.config.models import WorkloadConfig
 
 logger = logging.getLogger(__name__)
 
 random.seed(2026)
+
 
 class AlpacaWorkload(Workload):
     """Workload based on the Alpaca dataset."""
@@ -92,14 +95,22 @@ class AlpacaWorkload(Workload):
 
         prompt_lengths = [len(self.tokenizer.encode(p)) for p in prompts]
 
-        length_ranges = [(0, 50), (51, 100), (101, 200), (201, 500), (501, float("inf"))]
+        length_ranges = [
+            (0, 50),
+            (51, 100),
+            (101, 200),
+            (201, 500),
+            (501, float("inf")),
+        ]
 
         samples_per_range = self.config.sample_size // len(length_ranges)
 
         sampled = []
 
         for min_len, max_len in length_ranges:
-            range_prompts = [p for p, l in zip(prompts, prompt_lengths) if min_len <= l <= max_len]
+            range_prompts = [
+                p for p, l in zip(prompts, prompt_lengths) if min_len <= l <= max_len
+            ]
 
             if len(range_prompts) > samples_per_range:
                 sampled.extend(random.sample(range_prompts, samples_per_range))

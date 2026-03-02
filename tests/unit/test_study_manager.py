@@ -1,12 +1,11 @@
 """Unit tests for study manager."""
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock, AsyncMock
-from pathlib import Path
-import asyncio
+from unittest.mock import Mock
 
-from src.config.models import TuningConfig, GPUConfig, WorkloadConfig
-from src.tuner.study_manager import StudyManager
+import pytest
+
+from vllm_tuner.config.models import TuningConfig, GPUConfig, WorkloadConfig
+from vllm_tuner.tuner.study_manager import StudyManager
 
 
 class TestStudyManager:
@@ -28,7 +27,7 @@ class TestStudyManager:
     @pytest.fixture
     def sample_study_description(self):
         """Create sample Optuna study description."""
-        return f"""
+        return """
         Study description:
         - Name: test_study
         - Direction: maximize
@@ -205,10 +204,8 @@ class TestStudyManager:
 
 def test_combined_metrics_include_average_memory():
     """Test that combined metrics include average_memory_mb."""
-    from src.tuner.study_manager import StudyManager
-    from src.config.models import TuningConfig, GPUConfig, WorkloadConfig
+    from vllm_tuner.config import TuningConfig, GPUConfig, WorkloadConfig
     from unittest.mock import Mock
-    import asyncio
 
     config = TuningConfig(
         model="gpt2",

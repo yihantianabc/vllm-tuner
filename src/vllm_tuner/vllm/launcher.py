@@ -1,14 +1,15 @@
 """vLLM launcher for starting server with tuned parameters."""
 
-import subprocess
 import asyncio
 import logging
+import os
+import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any
-import os
+
 import httpx
 
-from ..config.models import TuningConfig, GPUConfig
+from vllm_tuner.config.models import TuningConfig
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,9 @@ class VLLMLauncher:
 
         return self.process
 
-    async def wait_ready(self, timeout: int = 300, check_interval: float = 10.0) -> bool:
+    async def wait_ready(
+        self, timeout: int = 300, check_interval: float = 10.0
+    ) -> bool:
         """Wait for server to be ready."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             elapsed = 0
@@ -125,7 +128,9 @@ class VLLMLauncher:
                         try:
                             response = await client.get(f"{self.base_url}{endpoint}")
                             if response.status_code == 200:
-                                logger.info(f"vLLM server ready at {self.base_url}{endpoint}")
+                                logger.info(
+                                    f"vLLM server ready at {self.base_url}{endpoint}"
+                                )
                                 return True
                         except httpx.HTTPStatusError as e:
                             if e.response.status_code != 404:

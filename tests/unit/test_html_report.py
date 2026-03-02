@@ -1,10 +1,8 @@
 """Unit tests for HTML report generation."""
 
 import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch
 
-from src.reporting.html import HTMLReportGenerator
+from vllm_tuner.reporting.html import HTMLReportGenerator
 
 
 class TestHTMLReportGenerator:
@@ -321,7 +319,7 @@ def test_generate_report_filters_failed_trials(tmp_path):
 
 def test_generate_html_report_function():
     """Test the convenience function generate_html_report."""
-    from src.reporting.html import generate_html_report
+    from vllm_tuner.reporting import generate_html_report
     from pathlib import Path
     import tempfile
 

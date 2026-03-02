@@ -5,14 +5,14 @@ import logging
 from pathlib import Path
 from typing import Optional, Callable
 
-from src.config.models import TuningConfig
-from .optimizer import VLLMOptimizer
-from ..benchmarks.alpaca import create_alpaca_workload
-from ..benchmarks.request_generator import BenchmarkRunner
-from ..profiling.gpu_collector import GPUCollector
-from ..profiling.vllm_metrics import VLLMMetricsTracker
-from ..vllm.launcher import VLLMLauncher
-from ..vllm.telemetry import VLLMTelemetryParser
+from vllm_tuner.config.models import TuningConfig
+from vllm_tuner.tuner.optimizer import VLLMOptimizer
+from vllm_tuner.benchmarks.alpaca import create_alpaca_workload
+from vllm_tuner.benchmarks.request_generator import BenchmarkRunner
+from vllm_tuner.profiling.gpu_collector import GPUCollector
+from vllm_tuner.profiling.vllm_metrics import VLLMMetricsTracker
+from vllm_tuner.vllm.launcher import VLLMLauncher
+from vllm_tuner.vllm.telemetry import VLLMTelemetryParser
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,9 @@ class StudyManager:
                         all_memory_samples.append(stats.memory_used_mb)
 
             average_memory = (
-                sum(all_memory_samples) / len(all_memory_samples) if all_memory_samples else 0
+                sum(all_memory_samples) / len(all_memory_samples)
+                if all_memory_samples
+                else 0
             )
 
             combined_metrics = {

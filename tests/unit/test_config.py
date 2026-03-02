@@ -1,10 +1,11 @@
 """Unit tests for configuration models."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 from pydantic import ValidationError
 
-from src.config.models import (
+from vllm_tuner.config.models import (
     GPUConfig,
     WeightedObjectives,
     Constraints,
@@ -13,10 +14,9 @@ from src.config.models import (
     StudySettings,
     TuningConfig,
 )
-from src.config.validation import (
+from vllm_tuner.config.validation import (
     load_yaml_config,
     validate_study_name,
-    create_study_dirs,
     TunerSettings,
 )
 

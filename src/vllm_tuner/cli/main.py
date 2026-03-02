@@ -8,16 +8,16 @@ from typing import Optional
 
 import typer
 
-from src.config.validation import (
+from vllm_tuner.config.validation import (
     load_yaml_config,
     validate_study_name,
     create_study_dirs,
     TunerSettings,
 )
-from src.reporting.dashboard import ProgressDashboard
-from src.reporting.export import export_study_summary
-from src.reporting.html import generate_html_report
-from src.tuner.study_manager import StudyManager
+from vllm_tuner.reporting.dashboard import ProgressDashboard
+from vllm_tuner.reporting.export import export_study_summary
+from vllm_tuner.reporting.html import generate_html_report
+from vllm_tuner.tuner.study_manager import StudyManager
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -99,7 +99,7 @@ def tune(
 
             try:
                 baseline_output_dir = dirs["study"] / "baseline"
-                from src.baseline.runner import generate_baseline_from_config
+                from vllm_tuner.baseline.runner import generate_baseline_from_config
 
                 async def run_baseline():
                     await generate_baseline_from_config(config_obj, baseline_output_dir)
@@ -125,7 +125,8 @@ def tune(
                 else:  # If enabled by default, just warn and continue
                     logger.warning("Continuing without baseline...")
                     typer.echo(
-                        "\n⚠ Baseline generation failed, continuing without baseline", err=True
+                        "\n⚠ Baseline generation failed, continuing without baseline",
+                        err=True,
                     )
 
         study_manager = StudyManager(config_obj, study_name, dirs["study"])
@@ -159,7 +160,7 @@ def tune(
             dirs["configs"],
         )
 
-        typer.echo(f"\nConfiguration saved to:")
+        typer.echo("\nConfiguration saved to:")
         for key, path in exported.items():
             typer.echo(f"  {path}")
 
@@ -259,7 +260,11 @@ def report(
 
         if format == "html":
             generate_html_report(
-                study_name, dirs["reports"], summary, trials_data, baseline_data=baseline_data
+                study_name,
+                dirs["reports"],
+                summary,
+                trials_data,
+                baseline_data=baseline_data,
             )
             typer.echo(f"HTML report generated: {output}")
         elif format == "json":
@@ -385,13 +390,15 @@ def export(
         best = summary.get("best_trial", {})
 
         if not best:
-            typer.echo(f"Error: No successful trials found in study '{study_name}'", err=True)
+            typer.echo(
+                f"Error: No successful trials found in study '{study_name}'", err=True
+            )
             raise typer.Exit(1)
 
         if output is None:
             output = str(dirs["configs"] / f"best.{format}")
 
-        from ..reporting.export import export_best_config
+        from vllm_tuner.reporting.export import export_best_config
 
         export_best_config(best, Path(output), format)
 
@@ -434,7 +441,9 @@ def list_studies():
                 summary = json.load(f)
             best = summary.get("best_trial", {})
             metrics = best.get("metrics", {})
-            typer.echo(f"    Throughput: {metrics.get('throughput_requests_per_sec', 0):.2f} req/s")
+            typer.echo(
+                f"    Throughput: {metrics.get('throughput_requests_per_sec', 0):.2f} req/s"
+            )
 
 
 def main():

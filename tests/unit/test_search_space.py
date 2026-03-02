@@ -1,9 +1,7 @@
 """Unit tests for search space."""
 
-import pytest
-
-from src.optimization.search_space import VLLMSearchSpace
-from src.config.models import TuningConfig
+from vllm_tuner.config.models import TuningConfig
+from vllm_tuner.optimization.search_space import VLLMSearchSpace
 
 
 def test_search_space_defaults():

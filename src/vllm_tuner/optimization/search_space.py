@@ -1,9 +1,9 @@
 """Define search space for vLLM parameters."""
 
-from typing import Dict, Any, List, Tuple, Callable, Optional
 import logging
+from typing import Dict, Any, List, Tuple, Callable, Optional
 
-from ..config.models import TuningConfig
+from vllm_tuner.config.models import TuningConfig
 
 logger = logging.getLogger(__name__)
 
@@ -154,16 +154,26 @@ class VLLMSearchSpace:
 
                 if dtype is int:
                     if not isinstance(value, int) or value < min_val or value > max_val:
-                        logger.warning(f"Invalid {param}: {value}, range: [{min_val}, {max_val}]")
+                        logger.warning(
+                            f"Invalid {param}: {value}, range: [{min_val}, {max_val}]"
+                        )
                         return False
                 else:
-                    if not isinstance(value, (float, int)) or value < min_val or value > max_val:
-                        logger.warning(f"Invalid {param}: {value}, range: [{min_val}, {max_val}]")
+                    if (
+                        not isinstance(value, (float, int))
+                        or value < min_val
+                        or value > max_val
+                    ):
+                        logger.warning(
+                            f"Invalid {param}: {value}, range: [{min_val}, {max_val}]"
+                        )
                         return False
 
             if param in self.categorical:
                 if value not in self.categorical[param]:
-                    logger.warning(f"Invalid {param}: {value}, options: {self.categorical[param]}")
+                    logger.warning(
+                        f"Invalid {param}: {value}, options: {self.categorical[param]}"
+                    )
                     return False
 
         return True

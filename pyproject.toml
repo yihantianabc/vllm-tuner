@@ -4,6 +4,7 @@ dynamic = ["version"]
 description = "An intelligent auto-tuner for vLLM to maximize throughput, minimize latency and memory"
 readme = "README.md"
 requires-python = ">=3.9"
+packages = [{include = "vllm_tuner", from = "src"}]
 license = {text = "MIT license"}
 authors = [
     {name = "Javad Anaraki"}
@@ -38,12 +39,15 @@ dev = [
     "types-PyYAML>=6.0.0",
 ]
 
+[project.scripts]
+vllm-tuner = "vllm_tuner.cli.main:app"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "src/__init__.py"
+path = "src/vllm_tuner/__init__.py"
 
 [tool.semantic_release]
 version_source = "tag"
@@ -54,5 +58,5 @@ build_command = "python -m build"
 commit_parser = "conventional"
 allow_zero_version = true
 major_on_zero = false
-version_variables = ["src/__init__.py:__version__"]
+version_variables = ["src/vllm_tuner/__init__.py:__version__"]
 changelog_file = "CHANGELOG.md"

@@ -20,11 +20,10 @@ import asyncio
 import json
 import logging
 import os
-import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -34,9 +33,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.profiling.gpu_collector import GPUCollector, GPUStats
-from src.profiling.vllm_metrics import VLLMMetricsTracker
-from src.config.models import TuningConfig, GPUConfig, WorkloadConfig
+from src import GPUCollector
+from vllm_tuner.profiling import VLLMMetricsTracker
 
 logging.basicConfig(
     level=logging.INFO,

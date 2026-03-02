@@ -6,8 +6,8 @@ from typing import Dict, Any, Optional, Union
 
 import optuna
 
-from ..config.models import TuningConfig
-from ..optimization.search_space import VLLMSearchSpace
+from vllm_tuner.config.models import TuningConfig
+from vllm_tuner.optimization.search_space import VLLMSearchSpace
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +259,11 @@ class VLLMOptimizer:
             result = self.run_trial(trial, benchmark_func)
 
             completed_trials = len(
-                [t for t in self.study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+                [
+                    t
+                    for t in self.study.trials
+                    if t.state == optuna.trial.TrialState.COMPLETE
+                ]
             )
             total_trials = n_trials if n_trials else self.config.study.min_trials
             logger.info(
@@ -284,9 +288,13 @@ class VLLMOptimizer:
             completed = len(
                 [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
             )
-            failed = len([t for t in study.trials if t.state == optuna.trial.TrialState.FAIL])
+            failed = len(
+                [t for t in study.trials if t.state == optuna.trial.TrialState.FAIL]
+            )
             total = len(study.trials)
-            logger.info(f"Progress: {completed} completed, {failed} failed, {total} total trials")
+            logger.info(
+                f"Progress: {completed} completed, {failed} failed, {total} total trials"
+            )
 
         self.study.optimize(
             objective,
@@ -327,7 +335,9 @@ class VLLMOptimizer:
 
         result = {
             "trial_number": best_trial.number,
-            "value": best_trial.value if len(self.directions) == 1 else best_trial.values,
+            "value": best_trial.value
+            if len(self.directions) == 1
+            else best_trial.values,
             "parameters": params,
             "metrics": metrics,
             "state": str(best_trial.state),
@@ -339,7 +349,9 @@ class VLLMOptimizer:
             else None,
         }
 
-        value = best_trial.values if len(self.study.directions) > 1 else best_trial.value
+        value = (
+            best_trial.values if len(self.study.directions) > 1 else best_trial.value
+        )
         logger.info(f"Best trial: {best_trial.number} with value: {value}")
 
         return result
@@ -359,7 +371,9 @@ class VLLMOptimizer:
         for trial in sorted_trials[:n]:
             result = {
                 "trial_number": trial.number,
-                "value": trial.values if len(self.study.directions) > 1 else trial.value,
+                "value": trial.values
+                if len(self.study.directions) > 1
+                else trial.value,
                 "parameters": trial.params,
                 "metrics": trial.user_attrs.get("metrics", {}),
                 "state": str(trial.state),
@@ -383,7 +397,9 @@ class VLLMOptimizer:
         for trial in sorted_trials:
             result = {
                 "trial_number": trial.number,
-                "value": trial.values if len(self.study.directions) > 1 else trial.value,
+                "value": trial.values
+                if len(self.study.directions) > 1
+                else trial.value,
                 "parameters": trial.params,
                 "metrics": trial.user_attrs.get("metrics", {}),
                 "state": str(trial.state),

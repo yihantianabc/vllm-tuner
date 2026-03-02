@@ -1,13 +1,12 @@
 """Unit tests for baseline runner module."""
 
-import pytest
 import json
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-from dataclasses import asdict
+from unittest.mock import patch
 
-from src.config.models import TuningConfig, GPUConfig, WorkloadConfig, BaselineConfig
-from src.baseline.runner import BaselineMetrics, VLLMBaselineRunner
+import pytest
+
+from vllm_tuner.baseline.runner import BaselineMetrics, VLLMBaselineRunner
+from vllm_tuner.config.models import TuningConfig, GPUConfig, WorkloadConfig
 
 
 class TestBaselineMetrics:
@@ -102,7 +101,7 @@ class TestVLLMBaselineRunner:
         runner.dataset_name = "tatsu-lab/alpaca"
 
         # Mock dataset loader
-        with patch("src.baseline.runner.load_dataset") as mock_load:
+        with patch("vllm_tuner.baseline.runner.load_dataset") as mock_load:
             # Create sample data
             mock_data = [{"instruction": f"prompt {i}"} for i in range(20)]
             mock_load.return_value = mock_data
@@ -197,7 +196,7 @@ class TestVLLMBaselineRunner:
 
 def test_baseline_comparison_metrics_included():
     """Test that all metrics needed for comparison are included."""
-    from src.baseline.runner import BaselineMetrics
+    from vllm_tuner.baseline import BaselineMetrics
 
     metrics = BaselineMetrics(
         model="gpt2",

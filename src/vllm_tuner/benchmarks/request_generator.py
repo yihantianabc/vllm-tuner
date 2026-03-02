@@ -1,16 +1,15 @@
 """Generate and execute benchmark requests against vLLM server."""
 
-import logging
 import asyncio
+import logging
 import time
-from typing import List, Dict, Any, Optional, AsyncIterator
 from dataclasses import dataclass
-from datetime import datetime
+from typing import List, Dict, Any, Optional, AsyncIterator
 
 import httpx
 
-from ..profiling.vllm_metrics import VLLMMetricsTracker
-from ..vllm.launcher import VLLMLauncher
+from vllm_tuner.profiling.vllm_metrics import VLLMMetricsTracker
+from vllm_tuner.vllm.launcher import VLLMLauncher
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +102,9 @@ class BenchmarkClient:
         }
 
         try:
-            async with client.stream("POST", url, json=payload, timeout=self.timeout) as response:
+            async with client.stream(
+                "POST", url, json=payload, timeout=self.timeout
+            ) as response:
                 response.raise_for_status()
 
                 first_chunk_time = None
@@ -133,7 +134,9 @@ class BenchmarkClient:
                         pass
 
                 completion_time = time.time()
-                self.metrics_tracker.record_completion(request.request_id, output_tokens)
+                self.metrics_tracker.record_completion(
+                    request.request_id, output_tokens
+                )
 
                 return {
                     "request_id": request.request_id,
@@ -148,7 +151,9 @@ class BenchmarkClient:
             return None
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"Request {request.request_id} failed: {e.response.status_code}")
+            logger.error(
+                f"Request {request.request_id} failed: {e.response.status_code}"
+            )
             self.metrics_tracker.record_error("http")
 
             if e.response.status_code == 429:
@@ -205,7 +210,9 @@ class BenchmarkRunner:
         async with httpx.AsyncClient(timeout=300) as http_client:
             semaphore = asyncio.Semaphore(self.concurrency)
 
-            async def execute_request(req: BenchmarkRequest) -> Optional[Dict[str, Any]]:
+            async def execute_request(
+                req: BenchmarkRequest,
+            ) -> Optional[Dict[str, Any]]:
                 async with semaphore:
                     return await client.send_request(req, http_client)
 
@@ -258,7 +265,9 @@ class ResultCollector:
     def __init__(self):
         self.results: List[Dict[str, Any]] = []
 
-    def add_result(self, trial_id: str, result: Dict[str, Any], params: Dict[str, Any]) -> None:
+    def add_result(
+        self, trial_id: str, result: Dict[str, Any], params: Dict[str, Any]
+    ) -> None:
         """Add a trial result."""
         self.results.append(
             {
@@ -268,7 +277,9 @@ class ResultCollector:
             }
         )
 
-    def get_best(self, objective: str = "throughput_requests_per_sec") -> Optional[Dict[str, Any]]:
+    def get_best(
+        self, objective: str = "throughput_requests_per_sec"
+    ) -> Optional[Dict[str, Any]]:
         """Get the best result by objective."""
         if not self.results:
             return None
@@ -281,12 +292,16 @@ class ResultCollector:
         if not self.results:
             return {}
 
-        throughputs = [r["metrics"].get("throughput_requests_per_sec", 0) for r in self.results]
+        throughputs = [
+            r["metrics"].get("throughput_requests_per_sec", 0) for r in self.results
+        ]
         latencies = [r["metrics"].get("avg_latency_ms", 0) for r in self.results]
 
         return {
             "num_trials": len(self.results),
-            "throughput_mean": sum(throughputs) / len(throughputs) if throughputs else 0,
+            "throughput_mean": sum(throughputs) / len(throughputs)
+            if throughputs
+            else 0,
             "throughput_max": max(throughputs) if throughputs else 0,
             "throughput_min": min(throughputs) if throughputs else 0,
             "latency_mean": sum(latencies) / len(latencies) if latencies else 0,
