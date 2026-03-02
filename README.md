@@ -23,7 +23,7 @@ An intelligent tuner for vLLM that automatically monitors GPU metrics, uses Baye
 uv venv --seed --python 3.10
 source .venv/bin/activate
 
-# Install dependencies
+# Install vllm-tuner
 uv pip install git+https://github.com/jranaraki/vllm-tuner
 
 # Install vLLM
