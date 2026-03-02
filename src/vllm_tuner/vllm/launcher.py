@@ -98,7 +98,7 @@ class VLLMLauncher:
             visible_devices = ",".join(str(id) for id in self.config.gpu.device_ids)
             env["CUDA_VISIBLE_DEVICES"] = visible_devices
 
-        with open(log_path, "w") as f:
+        with open(log_path, "w", encoding="utf-8") as f:
             self.process = subprocess.Popen(
                 cmd,
                 stdout=f,

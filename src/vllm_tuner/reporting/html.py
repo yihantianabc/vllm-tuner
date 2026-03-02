@@ -48,7 +48,7 @@ class HTMLReportGenerator:
             charts,
         )
 
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             f.write(html_content)
 
         logger.info(f"HTML report generated: {output_path}")
@@ -61,7 +61,7 @@ class HTMLReportGenerator:
         try:
             baseline_file = baseline_dir / "baseline_metrics.json"
             if baseline_file.exists():
-                with open(baseline_file) as f:
+                with open(baseline_file, encoding="utf-8") as f:
                     data = json.load(f)
                     metrics = data.get("metrics", {})
                     logger.info(f"Loaded baseline metrics from {baseline_file}")
@@ -69,7 +69,7 @@ class HTMLReportGenerator:
 
             baseline_yaml = baseline_dir / "baseline_config.yaml"
             if baseline_yaml.exists():
-                with open(baseline_yaml) as f:
+                with open(baseline_yaml, encoding="utf-8") as f:
                     data = yaml.safe_load(f)
                     metrics = data.get("baseline_metrics", {})
                     logger.info(f"Loaded baseline metrics from {baseline_yaml}")

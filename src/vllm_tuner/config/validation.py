@@ -16,7 +16,7 @@ def load_yaml_config(config_path: str | Path) -> TuningConfig:
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         config_data = yaml.safe_load(f)
 
     try:
@@ -30,7 +30,7 @@ def save_yaml_config(config: TuningConfig, output_path: str | Path) -> None:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         yaml.dump(config.model_dump(), f, default_flow_style=False, sort_keys=False)
 
 

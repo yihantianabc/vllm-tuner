@@ -111,7 +111,7 @@ def tune(
                 # Print quick summary
                 baseline_file = baseline_output_dir / "baseline_summary.txt"
                 if baseline_file.exists():
-                    with open(baseline_file) as f:
+                    with open(baseline_file, encoding="utf-8") as f:
                         typer.echo(f.read())
 
                 typer.echo("\n" + "=" * 80)
@@ -168,7 +168,7 @@ def tune(
         baseline_file = dirs["study"] / "baseline" / "baseline_metrics.json"
         if baseline_file.exists():
             try:
-                with open(baseline_file) as f:
+                with open(baseline_file, encoding="utf-8") as f:
                     baseline_full = json.load(f)
                     baseline_data = baseline_full.get("metrics", {})
                     logger.info("Loaded baseline metrics for reporting")
@@ -238,17 +238,17 @@ def report(
 
         import json
 
-        with open(summary_path, "r") as f:
+        with open(summary_path, "r", encoding="utf-8") as f:
             summary = json.load(f)
 
-        with open(trials_path, "r") as f:
+        with open(trials_path, "r", encoding="utf-8") as f:
             trials_data = json.load(f)
 
         baseline_data = None
         baseline_file = dirs["study"] / "baseline" / "baseline_metrics.json"
         if baseline_file.exists():
             try:
-                with open(baseline_file) as f:
+                with open(baseline_file, encoding="utf-8") as f:
                     baseline_full = json.load(f)
                     baseline_data = baseline_full.get("metrics", {})
                     logger.info("Loaded baseline metrics for reporting")
@@ -269,13 +269,13 @@ def report(
             typer.echo(f"HTML report generated: {output}")
         elif format == "json":
             Path(output).parent.mkdir(parents=True, exist_ok=True)
-            with open(output, "w") as f:
+            with open(output, "w", encoding="utf-8") as f:
                 json.dump({"summary": summary, "trials": trials_data}, f, indent=2)
             typer.echo(f"JSON report generated: {output}")
         elif format == "markdown":
             markdown = _generate_markdown_summary(summary, trials_data)
             Path(output).parent.mkdir(parents=True, exist_ok=True)
-            with open(output, "w") as f:
+            with open(output, "w", encoding="utf-8") as f:
                 f.write(markdown)
             typer.echo(f"Markdown report generated: {output}")
         else:
@@ -384,7 +384,7 @@ def export(
 
         import json
 
-        with open(summary_path, "r") as f:
+        with open(summary_path, "r", encoding="utf-8") as f:
             summary = json.load(f)
 
         best = summary.get("best_trial", {})
@@ -437,7 +437,7 @@ def list_studies():
         if summary_path.exists():
             import json
 
-            with open(summary_path, "r") as f:
+            with open(summary_path, "r", encoding="utf-8") as f:
                 summary = json.load(f)
             best = summary.get("best_trial", {})
             metrics = best.get("metrics", {})

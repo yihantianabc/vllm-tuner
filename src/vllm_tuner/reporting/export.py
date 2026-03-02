@@ -19,10 +19,10 @@ def export_config(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if format == "json":
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
     elif format == "yaml":
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     else:
         raise ValueError(f"Unsupported format: {format}")
@@ -38,10 +38,10 @@ def import_config(
     suffix = config_path.suffix.lower()
 
     if suffix == ".json":
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
     elif suffix in [".yaml", ".yml"]:
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f)
     else:
         raise ValueError(f"Unsupported config format: {suffix}")
@@ -86,12 +86,12 @@ def export_study_summary(
     exported = {}
 
     summary_path = output_dir / "summary.json"
-    with open(summary_path, "w") as f:
+    with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(study_summary, f, indent=2)
     exported["summary"] = summary_path
 
     trials_path = output_dir / "trials.json"
-    with open(trials_path, "w") as f:
+    with open(trials_path, "w", encoding="utf-8") as f:
         json.dump(trials_data, f, indent=2)
     exported["trials"] = trials_path
 

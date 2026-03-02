@@ -163,7 +163,7 @@ class VLLMBaselineRunner:
         visible_devices = ",".join(str(gpu_id) for gpu_id in self.config.gpu.device_ids)
         env["CUDA_VISIBLE_DEVICES"] = visible_devices
 
-        with open(log_path, "w") as log_file:
+        with open(log_path, "w", encoding="utf-8") as log_file:
             self.process = subprocess.Popen(
                 cmd,
                 stdout=log_file,
@@ -405,7 +405,7 @@ class VLLMBaselineRunner:
             self.metrics.gpu_info = {}
 
         json_path = self.output_dir / "baseline_metrics.json"
-        with open(json_path, "w") as f:
+        with open(json_path, "w", encoding="utf-8") as f:
             json.dump(self.metrics.to_dict(), f, indent=2)
         logger.info(f"JSON output: {json_path}")
 
@@ -444,7 +444,7 @@ class VLLMBaselineRunner:
         }
 
         yaml_path = self.output_dir / "baseline_config.yaml"
-        with open(yaml_path, "w") as f:
+        with open(yaml_path, "w", encoding="utf-8") as f:
             yaml.dump(yaml_data, f, default_flow_style=False, sort_keys=False)
         logger.info(f"YAML output: {yaml_path}")
 
@@ -501,7 +501,7 @@ Generated: {self.metrics.timestamp}
 """
 
         text_path = self.output_dir / "baseline_summary.txt"
-        with open(text_path, "w") as f:
+        with open(text_path, "w", encoding="utf-8") as f:
             f.write(summary)
         logger.info(f"Text summary: {text_path}")
 
