@@ -73,22 +73,38 @@ vllm-tuner tune --config examples/multi_gpu_tune.yaml --study-name llama2_7b_tun
 
 ## Output Structure
 
-Studies are saved to `studies/<study_name>/`:
+Studies and reports are saved to `studies/<study_name>/` and `reports`, respectively:
+
 ```text
-studies/my_study/
-├── optuna.db                 # SQLite study database
-├── baseline/                 # Baseline metrics (if enabled)
-│   ├── baseline_metrics.json
-│   └── baseline_config.yaml
-├── logs/                     # vLLM server logs
-├── configs/                  # Summary & best configs
-│   ├── summary.json
-│   ├── trials.json
-│   ├── best_config.yaml
-│   └── best_config.json
-└── reports/
-    └── report.html           # Interactive Plotly report
+├── configs
+│		 └── default.yaml                   # vLLM-Tuner config
+├── reports
+│		 └── my_study
+│		     └── report.html                # Interactive Plotly report
+└── studies
+    └── my_study
+        ├── baseline                        # Baseline metrics (if enabled)
+        │		 ├── baseline_config.yaml
+        │		 ├── baseline_metrics.json
+        │		 ├── baseline_summary.txt
+        │		 └── logs
+        │		     └── vllm_baseline.log
+        ├── configs                         # Summary & best configs
+        │		 ├── best_config.json
+        │		 ├── best_config.yaml
+        │		 ├── summary.json
+        │		 └── trials.json
+        ├── logs                            # vLLM server logs
+        │		 ├── vllm_trial_0.log
+        │		 ├── vllm_trial_1.log
+        │		 ├── vllm_trial_2.log
+        │		 ├── vllm_trial_3.log
+        │        ├── vllm_trial_4.log
+        │		 └── ...
+        └── optuna.db                       # SQLite study database
+
 ```
+
 And the final report is as follows:
 
 ![report_screenshot.png](docs/report_screenshot.png)
