@@ -110,6 +110,20 @@ And the final report is as follows:
 
 For detailed information, see the [comprehensive documentation](docs/README.md).
 
+## Citing
+
+If you find vllm-tuner useful and interested in citing this work, please use the following BibTex entry:
+
+```
+@software{vllmtuner2026,
+  author = {Javad Anaraki},
+  title = {vllm-tuner: Automated Parameter Tuning for vLLM via Bayesian Optimization},
+  url = {https://github.com/jranaraki/vllm-tuner},
+  version = {0.1.0},
+  year = {2026},
+}
+```
+
 ## Acknowledgments
 
 - [Optuna](https://optuna.org/) for Bayesian optimization
