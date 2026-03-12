@@ -4,3 +4,4 @@
 .ruff_cache
 DESIGN.md
 vllm_tuner.egg-info
+src/vllm_tuner/__pycache__
