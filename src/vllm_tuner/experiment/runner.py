@@ -976,7 +976,7 @@ class SLOTuneExperimentRunner:
         """Run search, formal repeats, holdout, scheduler ablation, and report."""
         trace = await self._prepare_trace()
         holdout_trace = await self._prepare_trace(holdout=True)
-        if trace.checksum() == holdout_trace.checksum():
+        if self.config.study.holdout_enabled and trace.checksum() == holdout_trace.checksum():
             raise ValueError(
                 "Search and holdout traces are identical; holdout must be excluded from search"
             )

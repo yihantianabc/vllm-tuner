@@ -676,6 +676,48 @@ async def test_identical_search_and_holdout_trace_is_rejected(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_identical_trace_is_allowed_when_holdout_is_disabled(tmp_path, monkeypatch) -> None:
+    trace_path = tmp_path / "same.jsonl"
+    rows = [
+        {
+            "request_id": "request-0",
+            "scheduled_offset_seconds": 0.0,
+            "prompt": "hello",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "profile": "chat",
+        }
+    ]
+    trace_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    runner = SLOTuneExperimentRunner(
+        TuningConfig(
+            model="fake-model",
+            workload=WorkloadConfig(name="chat", sample_size=1),
+            telemetry=TelemetryConfig(enabled=False),
+            study=StudySettings(
+                trial_budget=1,
+                methods=["default"],
+                repeat_count=1,
+                holdout_enabled=False,
+            ),
+        ),
+        "identical-traces-without-holdout",
+        results_root=tmp_path,
+        repository=".",
+        trace_path=trace_path,
+        holdout_trace_path=trace_path,
+        tokenizer=FakeTokenizer(),
+    )
+
+    def reached_artifact_initialization(*args, **kwargs):
+        raise RuntimeError("artifact initialization reached")
+
+    monkeypatch.setattr(runner, "_initialize_artifacts", reached_artifact_initialization)
+    with pytest.raises(RuntimeError, match="artifact initialization reached"):
+        await runner.run()
+
+
+@pytest.mark.asyncio
 async def test_resume_replays_complete_trials_without_rerunning(tmp_path, monkeypatch) -> None:
     config = TuningConfig(
         model="fake-model",
