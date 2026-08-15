@@ -9,8 +9,8 @@ from typing import Optional, Dict, Any
 import yaml
 
 try:
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
+    import plotly.graph_objects as go  # type: ignore[import-untyped]
+    from plotly.subplots import make_subplots  # type: ignore[import-untyped]
 except ImportError:
     raise ImportError("plotly is required. Install with: pip install plotly")
 
@@ -23,7 +23,10 @@ class HTMLReportGenerator:
     """Generate interactive HTML reports with Plotly charts."""
 
     def __init__(
-        self, study_name: str, output_dir: Path, baseline_data: Optional[Dict[str, Any]] = None
+        self,
+        study_name: str,
+        output_dir: Path,
+        baseline_data: Optional[Dict[str, Any]] = None,
     ):
         self.study_name = study_name
         self.output_dir = output_dir
@@ -85,7 +88,7 @@ class HTMLReportGenerator:
         trials_data: list[Dict[str, Any]],
     ) -> Dict[str, str]:
         """Create Plotly charts for the report."""
-        charts = {}
+        charts: Dict[str, str] = {}
 
         if not trials_data:
             logger.warning("No trial data available for charts")
@@ -207,14 +210,18 @@ class HTMLReportGenerator:
         latencies: list[float],
     ) -> str:
         """Create latency distribution chart."""
-        valid_latencies = [l for l in latencies if l < float("inf")]
+        valid_data = [
+            (trial, latency)
+            for trial, latency in zip(trial_numbers, latencies)
+            if latency < float("inf")
+        ]
 
         fig = go.Figure()
 
         fig.add_trace(
             go.Scatter(
-                x=trial_numbers,
-                y=latencies,
+                x=[item[0] for item in valid_data],
+                y=[item[1] for item in valid_data],
                 mode="lines+markers",
                 name="Avg Latency",
                 line=dict(color="#f39c12"),
@@ -236,7 +243,11 @@ class HTMLReportGenerator:
         latencies: list[float],
     ) -> str:
         """Create Pareto front scatter plot."""
-        valid_data = [(t, l) for t, l in zip(throughputs, latencies) if t > 0 and l < float("inf")]
+        valid_data = [
+            (throughput, latency)
+            for throughput, latency in zip(throughputs, latencies)
+            if throughput > 0 and latency < float("inf")
+        ]
 
         if not valid_data:
             return ""
@@ -352,7 +363,11 @@ class HTMLReportGenerator:
             col=1,
         )
 
-        valid_data = [(t, l) for t, l in zip(throughputs, latencies) if t > 0 and l < float("inf")]
+        valid_data = [
+            (throughput, latency)
+            for throughput, latency in zip(throughputs, latencies)
+            if throughput > 0 and latency < float("inf")
+        ]
 
         if valid_data:
             valid_throughputs = [d[0] for d in valid_data]

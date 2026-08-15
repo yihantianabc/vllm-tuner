@@ -106,8 +106,6 @@ class TestHTMLReportGenerator:
         self, sample_study_summary, sample_baseline_data, tmp_path
     ):
         """Test improvement calculation when throughput increased."""
-        generator = HTMLReportGenerator("test_study", tmp_path, sample_baseline_data)
-
         best_throughput = sample_study_summary["best_trial"]["metrics"][
             "throughput_requests_per_sec"
         ]
@@ -127,7 +125,6 @@ class TestHTMLReportGenerator:
         # Set best throughput lower than baseline
         sample_study_summary["best_trial"]["metrics"]["throughput_requests_per_sec"] = 100.0
 
-        generator = HTMLReportGenerator("test_study", tmp_path, sample_baseline_data)
         best_throughput = sample_study_summary["best_trial"]["metrics"][
             "throughput_requests_per_sec"
         ]
@@ -143,8 +140,6 @@ class TestHTMLReportGenerator:
         self, sample_study_summary, sample_baseline_data, tmp_path
     ):
         """Test latency improvements (lower is better)."""
-        generator = HTMLReportGenerator("test_study", tmp_path, sample_baseline_data)
-
         best_latency = sample_study_summary["best_trial"]["metrics"]["avg_latency_ms"]
         baseline_latency = sample_baseline_data["avg_latency_ms"]
 
@@ -159,8 +154,6 @@ class TestHTMLReportGenerator:
         self, sample_study_summary, sample_baseline_data, tmp_path
     ):
         """Test P95 and P99 latency calculations."""
-        generator = HTMLReportGenerator("test_study", tmp_path, sample_baseline_data)
-
         # Test P95
         best_p95 = sample_study_summary["best_trial"]["metrics"]["p95_latency_ms"]
         baseline_p95 = sample_baseline_data["p95_latency_ms"]
@@ -179,8 +172,6 @@ class TestHTMLReportGenerator:
 
     def test_memory_delta_calculations(self, sample_study_summary, sample_baseline_data, tmp_path):
         """Test memory delta calculations (lower is better)."""
-        generator = HTMLReportGenerator("test_study", tmp_path, sample_baseline_data)
-
         best_memory = sample_study_summary["best_trial"]["metrics"]["average_memory_mb"]
         baseline_memory = sample_baseline_data["average_memory_mb"]
 

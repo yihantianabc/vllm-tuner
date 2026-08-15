@@ -3,9 +3,11 @@
 from .models import (
     GPUConfig,
     WeightedObjectives,
+    SLOConfig,
     Constraints,
     SearchSpaceOverride,
     WorkloadConfig,
+    TelemetryConfig,
     StudySettings,
     TuningConfig,
     BaselineConfig,
@@ -20,9 +22,11 @@ from .validation import (
 __all__ = [
     "GPUConfig",
     "WeightedObjectives",
+    "SLOConfig",
     "Constraints",
     "SearchSpaceOverride",
     "WorkloadConfig",
+    "TelemetryConfig",
     "StudySettings",
     "TuningConfig",
     "BaselineConfig",

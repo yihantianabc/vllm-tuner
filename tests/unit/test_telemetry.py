@@ -2,7 +2,14 @@
 
 from pathlib import Path
 
-from vllm_tuner.vllm.telemetry import VLLMTelemetryParser, parse_vllm_logs, detect_oom_from_logs
+import pytest
+
+from vllm_tuner.vllm.telemetry import (
+    VLLMTelemetryParser,
+    parse_vllm_logs,
+    parse_vllm_prometheus,
+    detect_oom_from_logs,
+)
 
 
 def test_telemetry_parser_empty_logs():
@@ -22,6 +29,8 @@ def test_telemetry_parser_throughput():
     parser.parse_log_content(log_content)
 
     assert parser.metrics["throughput_tokens_per_sec"] == 100.5
+    assert parser.metrics["source"] == "log_diagnostic_fallback"
+    assert parser.metrics["authoritative"] is False
 
 
 def test_telemetry_parser_decode_latency():
@@ -79,7 +88,6 @@ def test_telemetry_parser_reset():
 
 def test_parse_vllm_logs_convenience():
     """Test convenience function for parsing logs."""
-    parser = VLLMTelemetryParser()
     result = parse_vllm_logs(Path("/nonexistent.log"))
 
     assert result["throughput_tokens_per_sec"] == 0.0
@@ -93,3 +101,28 @@ def test_detect_oom_from_logs():
     assert detect_oom_from_logs(Path("/nonexistent.log")) is False
 
     assert parser.metrics["oom_detected"] is True
+
+
+def test_prometheus_is_the_authoritative_telemetry_source():
+    metrics = parse_vllm_prometheus("""
+vllm:num_requests_running 3
+vllm:kv_cache_usage_perc 0.75
+vllm:num_preemptions_total 4
+vllm:inter_token_latency_seconds_sum 0.6
+vllm:inter_token_latency_seconds_count 3
+""")
+
+    assert metrics["source"] == "prometheus"
+    assert metrics["authoritative"] is True
+    assert metrics["engine"]["num_requests_running"] == 3.0
+    assert metrics["kv_cache_utilization"] == 0.75
+    assert metrics["decode_latency_ms"] == pytest.approx(200.0)
+
+
+def test_generic_runtime_error_is_not_misclassified_as_oom():
+    parser = VLLMTelemetryParser()
+
+    parser.parse_log_content("RuntimeError: invalid model configuration")
+
+    assert parser.metrics["runtime_error_detected"] is True
+    assert parser.metrics["oom_detected"] is False

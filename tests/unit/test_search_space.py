@@ -1,87 +1,65 @@
-"""Unit tests for search space."""
+"""Unit tests for the effective single-GPU search space."""
 
-from vllm_tuner.config.models import TuningConfig
+import pytest
+
+from vllm_tuner.config.models import SearchSpaceOverride, TuningConfig
 from vllm_tuner.optimization.search_space import VLLMSearchSpace
 
 
-def test_search_space_defaults():
-    """Test default search space."""
-    config = TuningConfig()
-    search_space = VLLMSearchSpace(config, num_gpus=1)
-
-    params = search_space.get_parameter_names()
-    assert "batch_size" in params
-    assert "max_num_seqs" in params
-    assert "gpu_memory_utilization" in params
-
-    assert "tensor_parallel_size" not in params
-    assert "pipeline_parallel_size" not in params
+def test_search_space_defaults_exclude_invalid_batch_size() -> None:
+    space = VLLMSearchSpace(TuningConfig())
+    assert space.get_parameter_names() == [
+        "gpu_memory_utilization",
+        "max_num_seqs",
+        "max_num_batched_tokens",
+    ]
+    assert "batch_size" not in space.get_parameter_names()
 
 
-def test_search_space_multi_gpu():
-    """Test search space for multi-GPU."""
-    config = TuningConfig()
-    search_space = VLLMSearchSpace(config, num_gpus=4)
-
-    params = search_space.get_parameter_names()
-    assert "tensor_parallel_size" in params
-    assert "pipeline_parallel_size" in params
+def test_search_space_rejects_multi_gpu() -> None:
+    with pytest.raises(ValueError, match="exactly one GPU"):
+        VLLMSearchSpace(TuningConfig(), num_gpus=4)
 
 
-def test_search_space_get_bounds():
-    """Test getting parameter bounds."""
-    config = TuningConfig()
-    search_space = VLLMSearchSpace(config, num_gpus=1)
-
-    batch_size_bounds = search_space.get_bounds("batch_size")
-    assert batch_size_bounds is not None
-    assert batch_size_bounds[0] >= 1
-    assert batch_size_bounds[1] <= 256
-
-
-def test_search_space_get_categories():
-    """Test getting categorical parameters."""
-    config = TuningConfig()
-    search_space = VLLMSearchSpace(config, num_gpus=4)
-
-    tp_sizes = search_space.get_categories("tensor_parallel_size")
-    assert tp_sizes is not None
-    assert 1 in tp_sizes
-    assert 2 in tp_sizes
+def test_search_space_bounds_categories_and_fixed_values() -> None:
+    space = VLLMSearchSpace(TuningConfig())
+    assert space.get_bounds("gpu_memory_utilization") == (0.60, 0.95)
+    assert space.get_categories("max_num_seqs") == [8, 16, 32, 64, 128]
+    assert space.get_fixed_params() == {
+        "tensor_parallel_size": 1,
+        "pipeline_parallel_size": 1,
+    }
 
 
-def test_search_space_validate_params():
-    """Test parameter validation."""
-    config = TuningConfig()
-    search_space = VLLMSearchSpace(config, num_gpus=1)
-
-    valid_params = {
-        "batch_size": 64,
-        "max_num_seqs": 256,
+def test_search_space_validate_params() -> None:
+    space = VLLMSearchSpace(TuningConfig())
+    valid = {
         "gpu_memory_utilization": 0.85,
+        "max_num_seqs": 64,
+        "max_num_batched_tokens": 2048,
+        "tensor_parallel_size": 1,
+        "pipeline_parallel_size": 1,
     }
-
-    assert search_space.validate_params(valid_params) is True
-
-
-def test_search_space_invalidate_params():
-    """Test invalid parameter validation."""
-    config = TuningConfig()
-    search_space = VLLMSearchSpace(config, num_gpus=1)
-
-    invalid_params = {
-        "batch_size": 1000,
-    }
-
-    assert search_space.validate_params(invalid_params) is False
+    assert space.validate_params(valid)
+    assert not space.validate_params({**valid, "max_num_seqs": 256})
+    assert not space.validate_params({**valid, "batch_size": 4})
 
 
-def test_search_space_override():
-    """Test search space overrides from config."""
-    config = TuningConfig()
-    config.search_space.batch_size = (10, 100)
+def test_search_space_override_and_checksum_are_stable() -> None:
+    config = TuningConfig(
+        search_space=SearchSpaceOverride(
+            gpu_memory_utilization=(0.7, 0.8),
+            max_num_seqs=[8, 32],
+            max_num_batched_tokens=[1024, 4096],
+        )
+    )
+    first = VLLMSearchSpace(config)
+    second = VLLMSearchSpace(config)
+    assert first.get_bounds("gpu_memory_utilization") == (0.7, 0.8)
+    assert first.checksum() == second.checksum()
 
-    search_space = VLLMSearchSpace(config, num_gpus=1)
-    batch_size_bounds = search_space.get_bounds("batch_size")
 
-    assert batch_size_bounds == (10, 100)
+def test_search_space_rejects_fixed_arg_collision() -> None:
+    config = TuningConfig(vllm_args={"tensor-parallel-size": 1})
+    with pytest.raises(ValueError, match="duplicates"):
+        VLLMSearchSpace(config)

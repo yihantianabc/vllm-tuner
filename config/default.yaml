@@ -1,58 +1,66 @@
-# vLLM Auto-Tuner Configuration
-# Default tuning configuration with preset weights
+# SLOTune single-GPU SLO-goodput experiment.
+model: "/root/autodl-tmp/models/Qwen2.5-3B-Instruct"
 
-# Model to tune
-model: "Qwen/Qwen1.5-0.5B-Chat-AWQ"
-
-# GPU configuration
 gpu:
   device_ids: [0]
   count: 1
 
-# Multi-objective optimization weights (must sum to 100)
-objectives:
-  throughput: 60
-  latency: 30
-  memory: 10
+slo:
+  ttft_ms: 1000
+  tpot_ms: 100
+  e2e_ms: null
 
-# Tuning constraints
 constraints:
-  max_latency_ms: null
-  max_memory_utilization: null
-  throughput_min: null
+  max_error_rate: 0.01
+  max_peak_vram_mb: 31000
+  max_memory_utilization: 0.95
+  require_no_oom: true
+  require_server_alive: true
 
-# Custom search space overrides (null = use default values)
 search_space:
-  batch_size: null
-  max_num_batched_tokens: null
-  max_num_seqs: null
-  gpu_memory_utilization: null
-  tensor_parallel_size: null
-  pipeline_parallel_size: null
+  gpu_memory_utilization: [0.60, 0.95]
+  max_num_seqs: [8, 16, 32, 64, 128]
+  max_num_batched_tokens: [1024, 2048, 4096, 8192]
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
 
-# Benchmark workload configuration
 workload:
-  name: "alpaca"
-  dataset_name: "tatsu-lab/alpaca"
+  name: "mixed"
+  dataset_name: "/root/autodl-tmp/vllm-tuner/data/alpaca_smoke.jsonl"
   sample_size: 100
-  prompt_length_distribution: "auto"
-  warmup_requests: 5
-  concurrent_requests: 10
-  max_tokens: 256
+  warmup_requests: 10
+  max_concurrency: 32
+  request_rate: 8
+  burstiness: 1.0
+  max_tokens: 128
+  ignore_eos: false
+  seed: 2026
+  benchmark_backend: "sse"
 
-# Baseline generation (before optimization)
-baseline:
+telemetry:
   enabled: true
+  interval_ms: 200
+  metrics_path: "/metrics"
+  collect_nvml: true
+  collect_energy: true
 
-# Optuna study settings
 study:
-  min_trials: 25
+  trial_budget: 16
   timeout_minutes: 1440
-  storage_backend: "sqlite:///studies/optuna.db"
-  prune_enabled: true
-  n_startup_trials: 2
+  # The core evaluator has no intermediate objective steps; failed/infeasible
+  # trials are handled explicitly instead of using a no-op Optuna pruner.
+  prune_enabled: false
+  n_startup_trials: 5
+  seed: 2026
+  methods: ["default", "random", "tpe"]
+  repeat_count: 3
+  top_candidates: 3
+  holdout_enabled: true
+  holdout_min_goodput_ratio: 0.8
+  resume: false
 
-# Additional arguments to pass to vLLM server
+baseline:
+  enabled: false
+
 vllm_args:
-  max-model-len: 1024
-  gpu-memory-utilization: 0.6
+  max-model-len: 8192

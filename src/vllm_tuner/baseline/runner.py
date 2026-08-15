@@ -19,14 +19,15 @@ import httpx
 import yaml
 
 try:
-    from datasets import load_dataset
+    from datasets import load_dataset  # type: ignore[import-untyped]
 except ImportError:
-    raise ImportError(
-        "datasets package is required. Install with: pip install datasets"
-    )
+    raise ImportError("datasets package is required. Install with: pip install datasets")
 
 from vllm_tuner.config.models import TuningConfig
+from vllm_tuner.benchmarks.models import BenchmarkResult, RequestSpec
+from vllm_tuner.benchmarks.sse_client import SSEBenchmarkClient
 from vllm_tuner.profiling.gpu_collector import GPUCollector
+from vllm_tuner.profiling.session import TelemetrySession
 from vllm_tuner.profiling.vllm_metrics import VLLMMetricsTracker
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ class VLLMBaselineRunner:
         self.gpu_collector = GPUCollector(device_ids=config.gpu.device_ids)
         self.num_requests = config.workload.sample_size
         self.warmup_requests = self.config.workload.warmup_requests
-        self.concurrent_requests = config.workload.concurrent_requests
+        self.concurrent_requests = config.workload.concurrent_requests or 1
         self.max_tokens = config.workload.max_tokens
         self.dataset_name = config.workload.dataset_name
         gpu_memory_utilization = config.vllm_args.get("gpu-memory-utilization", "0.6")
@@ -101,9 +102,9 @@ class VLLMBaselineRunner:
             **config.vllm_args,
             "gpu_memory_utilization": gpu_memory_utilization,
             "max_num_seqs": int(max_num_seqs),
-            "max_num_batched_tokens": int(max_num_batched_tokens)
-            if max_num_batched_tokens
-            else None,
+            "max_num_batched_tokens": (
+                int(max_num_batched_tokens) if max_num_batched_tokens else None
+            ),
             "tensor_parallel_size": int(tensor_parallel_size),
         }
 
@@ -122,6 +123,8 @@ class VLLMBaselineRunner:
         self.benchmark_start_time: Optional[datetime] = None
         self.benchmark_end_time: Optional[datetime] = None
         self.monitoring_task: Optional[asyncio.Task] = None
+        self.last_benchmark_result: Optional[BenchmarkResult] = None
+        self.telemetry_result: Optional[dict[str, Any]] = None
 
     def _build_vllm_command(self) -> List[str]:
         """Build vLLM server command with default parameters."""
@@ -149,8 +152,6 @@ class VLLMBaselineRunner:
     async def _start_vllm_server(self) -> subprocess.Popen:
         """Start vLLM server with environment setup."""
         logger.info("Starting vLLM server with default parameters...")
-
-        self.gpu_collector.initialize()
 
         log_dir = self.output_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -185,8 +186,8 @@ class VLLMBaselineRunner:
         """Wait for vLLM server to be ready."""
         logger.info(f"Waiting for vLLM server at {self.base_url}...")
 
-        start = time.time()
-        while time.time() - start < timeout:
+        start = time.perf_counter()
+        while time.perf_counter() - start < timeout:
             if self.process is None or self.process.poll() is not None:
                 logger.error("vLLM server process died")
                 return False
@@ -197,15 +198,11 @@ class VLLMBaselineRunner:
                         try:
                             response = await client.get(f"{self.base_url}{endpoint}")
                             if response.status_code == 200:
-                                logger.info(
-                                    f"vLLM server ready at {self.base_url}{endpoint}"
-                                )
+                                logger.info(f"vLLM server ready at {self.base_url}{endpoint}")
                                 return True
                         except httpx.HTTPStatusError as e:
                             if e.response.status_code != 404:
-                                logger.debug(
-                                    f"Health check {endpoint}: {e.response.status_code}"
-                                )
+                                logger.debug(f"Health check {endpoint}: {e.response.status_code}")
             except (httpx.ConnectError, httpx.ConnectTimeout):
                 pass
 
@@ -275,95 +272,51 @@ class VLLMBaselineRunner:
         metrics_tracker: VLLMMetricsTracker,
         request_id: str,
     ) -> bool:
-        """Send a single completion request to vLLM."""
-        url = f"{self.base_url}/v1/completions"
+        """Send one request through the typed SSE compatibility core."""
 
-        metrics_tracker.record_request(request_id)
-        start_time = time.time()
-
-        output_tokens = 0
-        payload = {
-            "model": self.config.model,
-            "prompt": prompt,
-            "max_tokens": self.max_tokens,
-            "temperature": 1.0,
-            "top_p": 1.0,
-        }
-
-        try:
-            async with client.stream(
-                "POST", url, json=payload, timeout=300
-            ) as response:
-                response.raise_for_status()
-
-                first_chunk_time = None
-                async for chunk in response.aiter_bytes():
-                    if first_chunk_time is None:
-                        first_chunk_time = time.time()
-                        ttft = first_chunk_time - start_time
-                        metrics_tracker.record_ttft(request_id, ttft)
-                    try:
-                        chunk_str = chunk.decode("utf-8")
-                        if "choices" in chunk_str:
-                            try:
-                                data = json.loads(chunk_str)
-                                if "choices" in data and data["choices"]:
-                                    text = data["choices"][0].get("text", "")
-                                    if text:
-                                        output_tokens += 1
-                            except json.JSONDecodeError:
-                                pass
-                    except Exception:
-                        pass
-
-                metrics_tracker.record_completion(request_id, output_tokens)
-
-        except httpx.TimeoutException:
-            logger.error(f"Request {request_id} timed out")
-            metrics_tracker.record_error("timeout")
-            return False
-
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Request {request_id} failed: {e.response.status_code}")
-            metrics_tracker.record_error("http")
-            return False
-
-        except Exception as e:
-            logger.error(f"Request {request_id} error: {e}")
-            metrics_tracker.record_error("general")
-            return False
-
-        return True
+        streaming_client = SSEBenchmarkClient(self.base_url, self.config.model)
+        result = await streaming_client.send_request(
+            RequestSpec(
+                request_id=request_id,
+                prompt=prompt,
+                model=self.config.model,
+                max_tokens=self.max_tokens,
+                temperature=1.0,
+                top_p=1.0,
+            ),
+            client,
+        )
+        metrics_tracker.record_result(result)
+        return result.success
 
     async def _run_benchmark(
         self,
         prompts: List[str],
         metrics_tracker: VLLMMetricsTracker,
     ) -> dict[str, Any]:
-        """Run benchmark with concurrent requests."""
+        """Run the new SSE scheduler while preserving the baseline API."""
         num_prompts = len(prompts)
 
         logger.info(
             f"Running benchmark with {num_prompts} prompts, concurrency={self.concurrent_requests}"
         )
-        metrics_tracker.start_benchmark()
-
-        async with httpx.AsyncClient() as client:
-            semaphore = asyncio.Semaphore(self.concurrent_requests)
-
-            async def execute_request(prompt: str, idx: int):
-                request_id = f"req_{idx}"
-                async with semaphore:
-                    return await self._send_request(
-                        prompt, client, metrics_tracker, request_id
-                    )
-
-            tasks = [execute_request(prompt, i) for i, prompt in enumerate(prompts)]
-            results = await asyncio.gather(*tasks, return_exceptions=False)
-
-        metrics_tracker.end_benchmark()
-        failed_count = sum(1 for r in results if not r)
-        succeeded_count = sum(1 for r in results if r)
+        specs = [
+            RequestSpec(
+                request_id=f"req_{index}",
+                prompt=prompt,
+                model=self.config.model,
+                max_tokens=self.max_tokens,
+                temperature=1.0,
+                top_p=1.0,
+            )
+            for index, prompt in enumerate(prompts)
+        ]
+        self.last_benchmark_result = await SSEBenchmarkClient(self.base_url, self.config.model).run(
+            specs, max_concurrency=self.concurrent_requests
+        )
+        metrics_tracker.record_benchmark_result(self.last_benchmark_result)
+        failed_count = int(self.last_benchmark_result.aggregate["failed"])
+        succeeded_count = int(self.last_benchmark_result.aggregate["completed"])
         metrics_summary = metrics_tracker.get_summary()
         logger.info(
             f"Benchmark completed: {succeeded_count}/{num_prompts} requests succeeded ({failed_count} failed)"
@@ -393,6 +346,19 @@ class VLLMBaselineRunner:
 
         if self.gpu_collector.initialized:
             self.gpu_collector.shutdown()
+
+    def _apply_telemetry_result(self, session: TelemetrySession, result: dict[str, Any]) -> None:
+        """Attach namespaced telemetry and populate historical sample fields."""
+
+        self.telemetry_result = result
+        self.metrics.metrics["telemetry"] = result
+        self.metrics.metrics["engine"] = result["engine"]
+        self.metrics.metrics["gpu"] = result["gpu"]
+        for sample in session.gpu_samples:
+            if sample.memory_used_mb is not None:
+                self.metrics.memory_samples.append(sample.memory_used_mb)
+            if sample.gpu_utilization_percent is not None:
+                self.metrics.gpu_util_samples.append(sample.gpu_utilization_percent / 100.0)
 
     def _generate_outputs(self):
         """Generate JSON, YAML, and text outputs."""
@@ -424,17 +390,16 @@ class VLLMBaselineRunner:
                 "p50_latency_ms": self.metrics.metrics.get("p50_latency_ms", 0),
                 "p95_latency_ms": self.metrics.metrics.get("p95_latency_ms", 0),
                 "p99_latency_ms": self.metrics.metrics.get("p99_latency_ms", 0),
-                "peak_memory_mb": max(self.metrics.memory_samples)
-                if self.metrics.memory_samples
-                else 0,
+                "peak_memory_mb": (
+                    max(self.metrics.memory_samples) if self.metrics.memory_samples else 0
+                ),
                 "average_memory_mb": (
                     sum(self.metrics.memory_samples) / len(self.metrics.memory_samples)
                     if self.metrics.memory_samples
                     else 0
                 ),
                 "average_gpu_utilization": (
-                    sum(self.metrics.gpu_util_samples)
-                    / len(self.metrics.gpu_util_samples)
+                    sum(self.metrics.gpu_util_samples) / len(self.metrics.gpu_util_samples)
                     if self.metrics.gpu_util_samples
                     else 0
                 ),
@@ -454,7 +419,10 @@ class VLLMBaselineRunner:
         """Generate human-readable text summary."""
         metrics_dict = self.metrics.to_dict()
 
-        total_memory_mb = self.metrics.gpu_info.get("total_memory_mb", 0)
+        total_memory_mb = self.metrics.gpu_info.get(
+            "total_memory_mb",
+            self.metrics.gpu_info.get("total_memory_total_mb", 0),
+        )
         peak_memory_mb = metrics_dict["metrics"].get("peak_memory_mb", 0)
         if total_memory_mb > 0:
             utilization_pct = peak_memory_mb / total_memory_mb * 100
@@ -510,6 +478,7 @@ Generated: {self.metrics.timestamp}
         logger.info(f"Starting baseline generation for {self.config.model}")
 
         stop_event = asyncio.Event()
+        telemetry: Optional[TelemetrySession] = None
 
         def cleanup():
             stop_event.set()
@@ -521,11 +490,7 @@ Generated: {self.metrics.timestamp}
 
             prompts = self._load_prompts()
             warmup_prompts = prompts[: self.warmup_requests]
-            main_prompts = prompts[
-                self.warmup_requests : self.warmup_requests + self.num_requests
-            ]
-
-            self.monitoring_task = asyncio.create_task(self._monitor_gpu(stop_event))
+            main_prompts = prompts[self.warmup_requests : self.warmup_requests + self.num_requests]
 
             if self.warmup_requests > 0 and warmup_prompts:
                 logger.info(f"Running warmup with {len(warmup_prompts)} requests...")
@@ -539,10 +504,39 @@ Generated: {self.metrics.timestamp}
             )
 
             main_metrics = VLLMMetricsTracker()
-            benchmark_results = await self._run_benchmark(main_prompts, main_metrics)
+            benchmark_results: Optional[dict[str, Any]] = None
+            if self.config.telemetry.enabled:
+                telemetry = TelemetrySession(
+                    prometheus_endpoint=(f"{self.base_url}{self.config.telemetry.metrics_path}"),
+                    device_ids=self.config.gpu.device_ids,
+                    sample_interval=self.config.telemetry.interval_ms / 1000.0,
+                    output_path=self.output_dir / "telemetry.jsonl",
+                    enable_nvml=self.config.telemetry.collect_nvml,
+                )
+                await telemetry.start()
+            try:
+                benchmark_results = await self._run_benchmark(main_prompts, main_metrics)
+                self.benchmark_end_time = datetime.now()
+            finally:
+                if telemetry is not None and telemetry.running:
+                    client_metrics = benchmark_results
+                    if client_metrics is None and self.last_benchmark_result is not None:
+                        client_metrics = self.last_benchmark_result.aggregate
+                    telemetry_result = await telemetry.stop(
+                        client_metrics=client_metrics,
+                        output_tokens=(
+                            int(client_metrics["total_output_tokens"])
+                            if client_metrics is not None
+                            and isinstance(client_metrics.get("total_output_tokens"), int)
+                            else None
+                        ),
+                    )
+                    self.telemetry_result = telemetry_result
 
-            self.benchmark_end_time = datetime.now()
+            assert benchmark_results is not None
             self.metrics.metrics = benchmark_results
+            if self.telemetry_result is not None and telemetry is not None:
+                self._apply_telemetry_result(telemetry, self.telemetry_result)
             self.metrics.metrics.update(
                 {
                     "initial_memory_mb": sum(

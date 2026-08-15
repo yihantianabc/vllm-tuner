@@ -1,0 +1,166 @@
+"""Evidence-first report and plot artifact tests."""
+
+import json
+
+import plotly.graph_objects as go
+
+from vllm_tuner.reporting.plots import (
+    capacity_curve,
+    figure_data_available,
+    summarize_capacity_rows,
+    telemetry_timeline,
+)
+from vllm_tuner.reporting.report import comparison_rows, generate_report
+
+
+def test_capacity_curve_does_not_turn_missing_results_into_zero() -> None:
+    figure = capacity_curve([{"offered_requests_per_sec": 4.0}])
+
+    assert figure_data_available(figure) is False
+    assert [trace.name for trace in figure.data] == ["Offered load"]
+
+
+def test_capacity_summary_reports_median_range_and_failed_repeats() -> None:
+    summaries = summarize_capacity_rows(
+        [
+            {
+                "offered_requests_per_sec": 4.0,
+                "achieved_requests_per_sec": 3.0,
+                "goodput_requests_per_sec": 2.0,
+                "status": "COMPLETE",
+                "feasible": True,
+            },
+            {
+                "offered_requests_per_sec": 4.0,
+                "achieved_requests_per_sec": 4.0,
+                "goodput_requests_per_sec": 3.0,
+                "status": "COMPLETE",
+                "feasible": True,
+            },
+            {
+                "offered_requests_per_sec": 4.0,
+                # Partial values from a failed point are diagnostic only and must
+                # never move the measured capacity summary.
+                "achieved_requests_per_sec": 100.0,
+                "goodput_requests_per_sec": 100.0,
+                "status": "FAILED",
+                "feasible": False,
+            },
+        ]
+    )
+
+    assert len(summaries) == 1
+    summary = summaries[0]
+    assert summary["offered_requests_per_sec"] == 4.0
+    assert summary["repeat_count"] == 3
+    assert summary["complete_count"] == 2
+    assert summary["feasible_count"] == 2
+    assert summary["failed_count"] == 1
+    assert summary["measured_count"] == 2
+    assert summary["median_achieved_requests_per_sec"] == 3.5
+    assert summary["min_achieved_requests_per_sec"] == 3.0
+    assert summary["max_achieved_requests_per_sec"] == 4.0
+    assert summary["median_goodput_requests_per_sec"] == 2.5
+    assert summary["min_goodput_requests_per_sec"] == 2.0
+    assert summary["max_goodput_requests_per_sec"] == 3.0
+    assert summary["median_p99_ttft_ms"] is None
+
+
+def test_repeat_comparison_keeps_distinct_tpe_candidates_separate() -> None:
+    rows = comparison_rows(
+        [
+            {
+                "method": "tpe",
+                "repeat_of": candidate,
+                "parameters": {"max_num_seqs": 8 * candidate},
+                "status": "COMPLETE",
+                "feasible": True,
+                "goodput_requests_per_sec": float(candidate),
+            }
+            for candidate in (1, 2)
+        ]
+    )
+
+    assert len(rows) == 2
+    assert {row["method"] for row in rows} == {"tpe-1", "tpe-2"}
+
+
+def test_telemetry_timeline_reads_namespaced_engine_and_gpu_series() -> None:
+    figure = telemetry_timeline(
+        [{"first_token_at": 1_100_000_000, "ttft_ms": 10.0}],
+        [
+            {
+                "monotonic_ns": 1_000_000_000,
+                "metrics": {
+                    "num_requests_waiting": 2,
+                    "kv_cache_usage_perc": 0.5,
+                },
+            }
+        ],
+        [
+            {
+                "monotonic_ns": 1_200_000_000,
+                "gpu_utilization_percent": 75,
+                "memory_used_mb": 512,
+            }
+        ],
+    )
+
+    assert figure_data_available(figure) is True
+    assert {trace.name for trace in figure.data} == {
+        "client.ttft_ms",
+        "engine.waiting",
+        "engine.kv_cache_usage",
+        "gpu.utilization_percent",
+        "gpu.memory_used_mb",
+    }
+
+
+def test_report_records_html_fallback_when_static_renderer_is_missing(
+    tmp_path, monkeypatch
+) -> None:
+    def unavailable_renderer(self, *args, **kwargs):
+        raise ValueError("kaleido is not installed")
+
+    monkeypatch.setattr(go.Figure, "write_image", unavailable_renderer)
+    paths = generate_report(
+        tmp_path,
+        manifest={
+            "experiment_id": "exp",
+            "model": "model",
+            "trace_sha256": "search",
+            "holdout_trace_sha256": "holdout",
+            "search_space_sha256": "space",
+        },
+        trials=[
+            {
+                "trial_number": 0,
+                "method": "default",
+                "status": "COMPLETE",
+                "feasible": True,
+                "offered_requests_per_sec": 2.0,
+                "achieved_requests_per_sec": 1.8,
+                "goodput_requests_per_sec": 1.5,
+                "p99_ttft_ms": 20.0,
+            }
+        ],
+        capacity_sweep=[
+            {
+                "offered_requests_per_sec": 2.0,
+                "achieved_requests_per_sec": 1.8,
+                "goodput_requests_per_sec": 1.5,
+                "status": "COMPLETE",
+                "feasible": True,
+            }
+        ],
+    )
+
+    plot_manifest = json.loads(paths["plot_manifest"].read_text())
+    for record in plot_manifest["plots"].values():
+        assert (tmp_path / record["html"]).exists()
+        assert record["static_image_available"] is False
+        assert "kaleido is not installed" in record["fallback_reason"]
+    assert plot_manifest["plots"]["capacity_curve"]["data_available"] is True
+    assert plot_manifest["plots"]["telemetry_timeline"]["data_available"] is False
+    assert "interactive HTML fallback" in paths["markdown"].read_text()
+    assert "Holdout trace SHA-256: `holdout`" in paths["markdown"].read_text()

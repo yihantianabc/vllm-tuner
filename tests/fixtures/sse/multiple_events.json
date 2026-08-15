@@ -1,0 +1,3 @@
+[
+  "data: {\"choices\":[{\"text\":\"\"}]}\n\ndata: {\"choices\":[{\"text\":\"first\",\"token_ids\":[21]}]}\n\ndata: {\"choices\":[{\"text\":\" second\",\"token_ids\":[22]}]}\n\ndata: {\"choices\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":2}}\n\ndata: [DONE]\n\n"
+]

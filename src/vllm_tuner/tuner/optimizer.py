@@ -1,8 +1,11 @@
-"""vLLM parameter optimization using Optuna multi-objective optimization."""
+"""Compatibility Optuna facade using SLOTune's single feasible-goodput objective."""
+
+from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
-from typing import Dict, Any, Optional, Union
+from typing import Any, Callable, Optional
 
 import optuna
 
@@ -13,7 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 class VLLMOptimizer:
-    """Optimize vLLM parameters using Optuna."""
+    """Run a single constrained TPE study without sentinel failure values.
+
+    New experiments use :class:`vllm_tuner.tuning.optimizer.ConstrainedSearchController` to
+    compare default, random, and TPE with equal budgets. This facade keeps the original public
+    API usable for callers that only request one TPE study.
+    """
 
     def __init__(
         self,
@@ -21,398 +29,204 @@ class VLLMOptimizer:
         study_name: str,
         storage_url: str = "sqlite:///studies/optuna.db",
         directions: Optional[list[str]] = None,
-    ):
+    ) -> None:
+        if directions not in (None, ["maximize"]):
+            raise ValueError("SLOTune has one objective: maximize feasible SLO goodput")
         self.config = config
         self.study_name = study_name
         self.storage_url = storage_url
         self.search_space = VLLMSearchSpace(config, config.gpu.count)
-
-        if directions is None:
-            objectives = config.objectives
-            directions = [
-                "maximize" if objectives.throughput > 0 else "ignore",
-                "minimize" if objectives.latency > 0 else "ignore",
-                "minimize" if objectives.memory > 0 else "ignore",
-            ]
-
-        self.directions = directions
+        self.directions = ["maximize"]
         self.study: Optional[optuna.Study] = None
 
-    def create_study(
-        self,
-        load_if_exists: bool = True,
-    ) -> optuna.Study:
-        """Create or load Optuna study."""
-        logger.info(f"Creating/loading Optuna study: {self.study_name}")
+    @staticmethod
+    def _constraints_func(trial: optuna.trial.FrozenTrial) -> tuple[float, ...]:
+        return tuple(float(value) for value in trial.user_attrs.get("constraint_values", [0.0]))
 
+    def create_study(self, load_if_exists: Optional[bool] = None) -> optuna.Study:
+        """Create a deterministic constrained TPE study; resume is explicit."""
+        if load_if_exists is None:
+            load_if_exists = self.config.study.resume
         sampler = optuna.samplers.TPESampler(
             multivariate=True,
-            seed=2026,
+            seed=self.config.study.seed,
+            constraints_func=self._constraints_func,
         )
-
-        pruner = None
-        directions = [d for d in self.directions if d != "ignore"]
-
+        pruner: Optional[optuna.pruners.BasePruner] = None
         if self.config.study.prune_enabled:
             pruner = optuna.pruners.MedianPruner(
                 n_startup_trials=self.config.study.n_startup_trials,
                 n_warmup_steps=5,
                 interval_steps=1,
             )
-
-        if len(directions) == 1:
-            direction = directions[0]
-            self.study = optuna.create_study(
-                study_name=self.study_name,
-                storage=self.storage_url,
-                load_if_exists=load_if_exists,
-                direction=direction,
-                sampler=sampler,
-                pruner=pruner,
-            )
-        else:
-            self.study = optuna.create_study(
-                study_name=self.study_name,
-                storage=self.storage_url,
-                load_if_exists=load_if_exists,
-                directions=directions,
-                sampler=sampler,
-                pruner=pruner,
-            )
-
-        logger.info(f"Study created with {len(self.study.trials)} trials")
+        self.study = optuna.create_study(
+            study_name=self.study_name,
+            storage=self.storage_url,
+            load_if_exists=load_if_exists,
+            direction="maximize",
+            sampler=sampler,
+            pruner=pruner,
+        )
         return self.study
 
-    def compute_objective(
-        self,
-        metrics: Dict[str, Any],
-    ) -> Dict[str, float]:
-        """Compute objective values from metrics."""
-        objectives = {}
-
-        throughput = metrics.get("throughput_requests_per_sec", 0.0)
-        latency = metrics.get("avg_latency_ms", float("inf"))
-        memory_util = metrics.get("aggregate_memory_utilization", 0.0)
-        oom = metrics.get("oom_detected", False)
-        oom_errors = metrics.get("oom_errors", 0)
-
-        if oom or oom_errors > 0:
-            return {
-                "throughput": 0.0,
-                "latency": float("inf"),
-                "memory": 1.0,
-            }
-
-        if self.config.objectives.throughput > 0:
-            objectives["throughput"] = throughput
-
-        if self.config.objectives.latency > 0:
-            objectives["latency"] = latency
-
-        if self.config.objectives.memory > 0:
-            objectives["memory"] = memory_util
-
-        return objectives
+    def compute_objective(self, metrics: dict[str, Any]) -> dict[str, float]:
+        """Read the sole objective from correctly reduced client metrics."""
+        value = metrics.get("goodput_requests_per_sec", metrics.get("request_goodput"))
+        if value is None:
+            raise ValueError("benchmark metrics do not contain SLO goodput")
+        return {"goodput": float(value)}
 
     def apply_constraints(
         self,
-        metrics: Dict[str, Any],
-        params: Dict[str, Any],
+        metrics: dict[str, Any],
+        params: Optional[dict[str, Any]] = None,
     ) -> bool:
-        """Check if trial satisfies constraints."""
-        constraints = self.config.constraints
-
-        if constraints.max_latency_ms is not None:
-            latency = metrics.get("avg_latency_ms", 0)
-            if latency > constraints.max_latency_ms:
-                logger.debug(
-                    f"Trial violated latency constraint: {latency} > {constraints.max_latency_ms}"
-                )
-                return False
-
-        if constraints.max_memory_utilization is not None:
-            memory_util = metrics.get("aggregate_memory_utilization", 0)
-            if memory_util > constraints.max_memory_utilization:
-                logger.debug(
-                    f"Trial violated memory constraint: {memory_util} > {constraints.max_memory_utilization}"
-                )
-                return False
-
-        if constraints.throughput_min is not None:
-            throughput = metrics.get("throughput_requests_per_sec", 0)
-            if throughput < constraints.throughput_min:
-                logger.debug(
-                    f"Trial violated throughput constraint: {throughput} < {constraints.throughput_min}"
-                )
-                return False
-
-        oom = metrics.get("oom_detected", False)
-        oom_errors = metrics.get("oom_errors", 0)
-
-        if oom or oom_errors > 0:
-            logger.debug("Trial had OOM error")
+        """Return explicit feasibility; missing health evidence is not assumed healthy."""
+        constraint_block = metrics.get("constraints")
+        if isinstance(constraint_block, dict) and "feasible" in constraint_block:
+            return bool(constraint_block["feasible"])
+        if metrics.get("error") or metrics.get("oom_detected") or metrics.get("oom_errors", 0):
             return False
-
+        if metrics.get("server_alive") is False:
+            return False
+        error_rate = metrics.get("error_rate")
+        if error_rate is not None and float(error_rate) > self.config.constraints.max_error_rate:
+            return False
+        peak = metrics.get("peak_memory_mb")
+        if (
+            peak is not None
+            and self.config.constraints.max_peak_vram_mb is not None
+            and float(peak) > self.config.constraints.max_peak_vram_mb
+        ):
+            return False
         return True
 
     def evaluate_trial(
         self,
         trial: optuna.Trial,
-        params: Dict[str, Any],
-        metrics: Dict[str, Any],
-    ) -> Union[float, list[float]]:
-        """Evaluate a trial and return objective value(s)."""
-        trial_id = str(trial.number)
-        params["_trial_id"] = trial_id
-
-        if not self.apply_constraints(metrics, params):
-            if len(self.directions) == 1:
-                return float("-inf")
-            else:
-                return [float("-inf")] * len(self.directions)
-
-        objectives = self.compute_objective(metrics)
-
-        logger.debug(f"Trial {trial_id} objectives: {objectives}")
-
+        params: dict[str, Any],
+        metrics: dict[str, Any],
+    ) -> float:
+        """Mark infeasible trials as pruned instead of returning negative infinity."""
         trial.set_user_attr("metrics", metrics)
+        if not self.apply_constraints(metrics, params):
+            violations = metrics.get("constraints", {}).get("violations", ["hard_constraint"])
+            trial.set_user_attr("trial_status", "INFEASIBLE")
+            trial.set_user_attr("constraint_values", [1.0 for _ in violations] or [1.0])
+            raise optuna.TrialPruned("INFEASIBLE: " + ", ".join(map(str, violations)))
+        objective = self.compute_objective(metrics)["goodput"]
+        trial.set_user_attr("trial_status", "COMPLETE")
+        trial.set_user_attr("constraint_values", [0.0])
+        return objective
 
-        if len(self.directions) == 1:
-            return list(objectives.values())[0]
-        else:
-            return list(objectives.values())
+    @staticmethod
+    def _resolve_awaitable(value: Any) -> Any:
+        if not asyncio.iscoroutine(value):
+            return value
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None or not loop.is_running():
+            return asyncio.run(value)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(asyncio.run, value).result()
 
     def run_trial(
-        self,
-        trial: optuna.Trial,
-        benchmark_func,
-    ) -> Union[float, list[float]]:
-        """Run a single optimization trial."""
-        trial_id = str(trial.number)
-        logger.info(f"Starting trial {trial_id}")
-
+        self, trial: optuna.Trial, benchmark_func: Callable[[dict[str, Any]], Any]
+    ) -> float:
+        """Run one candidate and let Optuna record real FAIL/PRUNED states."""
         params = self.search_space.apply_params(trial, {})
-        params["_trial_id"] = trial_id
-
+        params["_trial_id"] = str(trial.number)
         try:
-            coro = benchmark_func(params)
-            if asyncio.iscoroutine(coro):
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-
-                if loop.is_running():
-                    import concurrent.futures
-
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, coro)
-                        metrics = future.result()
-                else:
-                    metrics = loop.run_until_complete(coro)
-            else:
-                metrics = coro
-
+            metrics = self._resolve_awaitable(benchmark_func(params))
             return self.evaluate_trial(trial, params, metrics)
-
-        except Exception as e:
-            logger.error(f"Trial {trial_id} failed: {e}")
-
-            if len(self.directions) == 1:
-                return float("-inf")
-            else:
-                return [float("-inf")] * len(self.directions)
+        except optuna.TrialPruned:
+            raise
+        except Exception as error:
+            logger.error("Trial %s failed: %s", trial.number, error, exc_info=True)
+            trial.set_user_attr("trial_status", "FAILED")
+            trial.set_user_attr(
+                "failure_reason", {"type": type(error).__name__, "message": str(error)}
+            )
+            raise
 
     def optimize(
         self,
-        benchmark_func,
+        benchmark_func: Callable[[dict[str, Any]], Any],
         timeout_seconds: Optional[float] = None,
         n_trials: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """
-        Run optimization.
-
-        Args:
-            benchmark_func: Function that takes params dict and returns metrics dict
-            timeout_seconds: Maximum time to run in seconds
-            n_trials: Number of trials to run
-
-        Returns:
-            Dictionary with the best parameters and metrics
-        """
+    ) -> dict[str, Any]:
+        """Run TPE while allowing failed trials to be recorded and later trials to continue."""
         if self.study is None:
             self.create_study()
-
-        logger.info(f"Starting optimization with study: {self.study_name}")
-
-        def objective(trial: optuna.Trial) -> Union[float, list[float]]:
-            trial_num = trial.number
-            logger.info(f"Trial {trial_num} started")
-
-            if (
-                len([d for d in self.directions if d != "ignore"]) == 1
-                and self.config.study.prune_enabled
-            ):
-                trial.report(0, 0)
-
-            result = self.run_trial(trial, benchmark_func)
-
-            completed_trials = len(
-                [
-                    t
-                    for t in self.study.trials
-                    if t.state == optuna.trial.TrialState.COMPLETE
-                ]
-            )
-            total_trials = n_trials if n_trials else self.config.study.min_trials
-            logger.info(
-                f"Trial {trial_num} completed ({completed_trials}/{total_trials} trials done)"
-            )
-
-            return result
-
-        if timeout_seconds is not None:
-            timeout_seconds = min(
-                timeout_seconds,
-                self.config.study.timeout_minutes * 60,
-            )
-        else:
-            timeout_seconds = self.config.study.timeout_minutes * 60
-
-        if n_trials is None:
-            n_trials = self.config.study.min_trials
-
-        def progress_callback(study, trial):
-            trial_num = trial.number
-            completed = len(
-                [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-            )
-            failed = len(
-                [t for t in study.trials if t.state == optuna.trial.TrialState.FAIL]
-            )
-            total = len(study.trials)
-            logger.info(
-                f"Progress: {completed} completed, {failed} failed, {total} total trials"
-            )
-
+        assert self.study is not None
+        budget = n_trials or self.config.study.trial_budget
+        timeout = timeout_seconds or self.config.study.timeout_minutes * 60
         self.study.optimize(
-            objective,
-            timeout=timeout_seconds,
-            n_trials=n_trials,
-            callbacks=[progress_callback],
+            lambda trial: self.run_trial(trial, benchmark_func),
+            timeout=timeout,
+            n_trials=budget,
+            catch=(Exception,),
             show_progress_bar=False,
         )
-
-        logger.info(f"Optimization completed. Total trials: {len(self.study.trials)}")
-
         return self.get_best_result()
 
+    def _selectable_trials(self) -> list[optuna.trial.FrozenTrial]:
+        if self.study is None:
+            return []
+        return [
+            trial
+            for trial in self.study.trials
+            if trial.state == optuna.trial.TrialState.COMPLETE
+            and trial.user_attrs.get("trial_status", "COMPLETE") == "COMPLETE"
+            and trial.value is not None
+        ]
+
     def get_best_trial(self) -> Optional[optuna.trial.FrozenTrial]:
-        """Get the best trial from the study."""
-        if self.study is None or len(self.study.trials) == 0:
-            return None
+        """Select only feasible COMPLETE trials."""
+        candidates = self._selectable_trials()
+        return max(candidates, key=self._objective_value) if candidates else None
 
-        if len(self.study.directions) == 1:
-            return self.study.best_trial
-        else:
-            return self.study.best_trials[0]
+    @staticmethod
+    def _objective_value(trial: optuna.trial.FrozenTrial) -> float:
+        if trial.value is None:
+            raise ValueError("non-selectable Optuna trial has no objective value")
+        return float(trial.value)
 
-    def get_best_result(
-        self,
-    ) -> Dict[str, Any]:
-        """Get the best parameters and metrics from the study."""
-        best_trial = self.get_best_trial()
-
-        if best_trial is None:
-            logger.warning("No successful trials found")
-            return {}
-
-        params = best_trial.params
-
-        user_attrs = best_trial.user_attrs
-        metrics = user_attrs.get("metrics", {})
-
-        result = {
-            "trial_number": best_trial.number,
-            "value": best_trial.value
-            if len(self.directions) == 1
-            else best_trial.values,
-            "parameters": params,
-            "metrics": metrics,
-            "state": str(best_trial.state),
-            "datetime_start": best_trial.datetime_start.isoformat()
-            if best_trial.datetime_start
-            else None,
-            "datetime_complete": best_trial.datetime_complete.isoformat()
-            if best_trial.datetime_complete
-            else None,
+    @staticmethod
+    def _serialize_trial(trial: optuna.trial.FrozenTrial) -> dict[str, Any]:
+        return {
+            "trial_number": trial.number,
+            "value": trial.value,
+            "parameters": trial.params,
+            "metrics": trial.user_attrs.get("metrics", {}),
+            "state": trial.user_attrs.get("trial_status", trial.state.name),
+            "failure_reason": trial.user_attrs.get("failure_reason"),
+            "datetime_start": (trial.datetime_start.isoformat() if trial.datetime_start else None),
+            "datetime_complete": (
+                trial.datetime_complete.isoformat() if trial.datetime_complete else None
+            ),
         }
 
-        value = (
-            best_trial.values if len(self.study.directions) > 1 else best_trial.value
+    def get_best_result(self) -> dict[str, Any]:
+        trial = self.get_best_trial()
+        return self._serialize_trial(trial) if trial is not None else {}
+
+    def get_top_n_results(self, n: int = 3) -> list[dict[str, Any]]:
+        trials = sorted(
+            self._selectable_trials(),
+            key=self._objective_value,
+            reverse=True,
         )
-        logger.info(f"Best trial: {best_trial.number} with value: {value}")
+        return [self._serialize_trial(trial) for trial in trials[:n]]
 
-        return result
-
-    def get_top_n_results(self, n: int = 3) -> list[Dict[str, Any]]:
-        """Get top N results from the study."""
-        if self.study is None or len(self.study.trials) == 0:
+    def get_all_trials(self) -> list[dict[str, Any]]:
+        if self.study is None:
             return []
-
-        top_n = []
-
-        sorted_trials = sorted(
-            self.study.trials,
-            key=lambda t: (t.state != optuna.trial.TrialState.COMPLETE, t.number),
-        )
-
-        for trial in sorted_trials[:n]:
-            result = {
-                "trial_number": trial.number,
-                "value": trial.values
-                if len(self.study.directions) > 1
-                else trial.value,
-                "parameters": trial.params,
-                "metrics": trial.user_attrs.get("metrics", {}),
-                "state": str(trial.state),
-            }
-            top_n.append(result)
-
-        return top_n
-
-    def get_all_trials(self) -> list[Dict[str, Any]]:
-        """Get all trials from the study."""
-        if self.study is None or len(self.study.trials) == 0:
-            return []
-
-        all_trials = []
-
-        sorted_trials = sorted(
-            self.study.trials,
-            key=lambda t: (t.state != optuna.trial.TrialState.COMPLETE, t.number),
-        )
-
-        for trial in sorted_trials:
-            result = {
-                "trial_number": trial.number,
-                "value": trial.values
-                if len(self.study.directions) > 1
-                else trial.value,
-                "parameters": trial.params,
-                "metrics": trial.user_attrs.get("metrics", {}),
-                "state": str(trial.state),
-            }
-            all_trials.append(result)
-
-        return all_trials
+        return [self._serialize_trial(trial) for trial in self.study.trials]
 
     def delete_study(self) -> None:
-        """Delete the study."""
         if self.study is not None:
-            optuna.delete_study(
-                study_name=self.study_name,
-                storage=self.storage_url,
-            )
-            logger.info(f"Study deleted: {self.study_name}")
+            optuna.delete_study(study_name=self.study_name, storage=self.storage_url)
+            self.study = None

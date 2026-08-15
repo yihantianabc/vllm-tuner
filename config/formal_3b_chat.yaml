@@ -1,0 +1,70 @@
+# Formal protocol template: Qwen2.5-3B chat profile on one RTX 5090.
+# No performance result is implied until immutable artifacts from this file exist.
+model: "/root/autodl-tmp/models/Qwen2.5-3B-Instruct"
+
+gpu:
+  device_ids: [0]
+  count: 1
+
+slo:
+  ttft_ms: 800
+  tpot_ms: 80
+  e2e_ms: 6000
+
+constraints:
+  max_error_rate: 0.01
+  max_peak_vram_mb: 31000
+  max_memory_utilization: 0.95
+  require_no_oom: true
+  require_server_alive: true
+
+search_space:
+  gpu_memory_utilization: [0.60, 0.95]
+  max_num_seqs: [8, 16, 32, 64, 128]
+  max_num_batched_tokens: [1024, 2048, 4096, 8192]
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+workload:
+  name: "chat"
+  dataset_name: "synthetic:chat"
+  sample_size: 500
+  prompt_length_distribution: "weighted"
+  warmup_requests: 30
+  max_concurrency: 32
+  request_rate: 8.0
+  capacity_request_rates: [1, 2, 4, 8, 16, 32]
+  capacity_repeats: 3
+  burstiness: 1.0
+  max_tokens: 128
+  fixed_output_tokens: 128
+  ignore_eos: true
+  seed: 2026
+  request_timeout_seconds: 300
+  benchmark_backend: "sse"
+
+telemetry:
+  enabled: true
+  interval_ms: 200
+  metrics_path: "/metrics"
+  collect_nvml: true
+  collect_energy: true
+
+study:
+  trial_budget: 16
+  timeout_minutes: 1440
+  prune_enabled: false
+  n_startup_trials: 5
+  seed: 2026
+  methods: ["default", "random", "tpe"]
+  repeat_count: 3
+  top_candidates: 3
+  holdout_enabled: true
+  holdout_min_goodput_ratio: 0.8
+  resume: false
+
+baseline:
+  enabled: false
+
+vllm_args:
+  max-model-len: 4096

@@ -1,21 +1,23 @@
-"""vLLM launcher for starting server with tuned parameters."""
+"""Compatibility launcher backed by the process-group-safe runtime server."""
+
+from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Optional
 
 import httpx
 
 from vllm_tuner.config.models import TuningConfig
+from vllm_tuner.runtime.server import ManagedVLLMServer
 
 logger = logging.getLogger(__name__)
 
 
 class VLLMLauncher:
-    """Launch and manage vLLM server instance."""
+    """Retain the upstream API while using reliable lifecycle semantics."""
 
     def __init__(
         self,
@@ -23,162 +25,103 @@ class VLLMLauncher:
         host: str = "127.0.0.1",
         port: int = 8000,
         log_dir: Optional[Path] = None,
-    ):
+    ) -> None:
         self.config = config
         self.host = host
         self.port = port
         self.log_dir = log_dir or Path("logs")
-        self.process: Optional[subprocess.Popen] = None
         self.base_url = f"http://{host}:{port}"
+        self.process: Optional[subprocess.Popen[str]] = None
+        self._managed: Optional[ManagedVLLMServer] = None
+        self._trial_logs: dict[str, Path] = {}
 
-    def build_command(self, trial_params: Dict[str, Any]) -> list[str]:
-        """Build vLLM server command with trial parameters."""
-        cmd = [
-            "python",
-            "-m",
-            "vllm.entrypoints.openai.api_server",
-            "--model",
-            self.config.model,
-            "--host",
-            self.host,
-            "--port",
-            str(self.port),
-        ]
-
-        gpu_config = self.config.gpu
-
-        if len(gpu_config.device_ids) > 0:
-            visible_devices = ",".join(str(id) for id in gpu_config.device_ids)
-            cmd.extend(
-                [
-                    "--tensor-parallel-size",
-                    str(trial_params.get("tensor_parallel_size", 1)),
-                    "--pipeline-parallel-size",
-                    str(trial_params.get("pipeline_parallel_size", 1)),
-                ]
-            )
-
-        param_names = {
-            "gpu_memory_utilization": "--gpu-memory-utilization",
-            "max_num_seqs": "--max-num-seqs",
-            "max_num_batched_tokens": "--max-num-batched-tokens",
-        }
-
-        for param_name, arg_name in param_names.items():
-            if param_name in trial_params:
-                cmd.extend([arg_name, str(trial_params[param_name])])
-
-        for key, value in self.config.vllm_args.items():
-            cmd.extend([f"--{key}", str(value)])
-
-        cmd.append("--disable-log-requests")
-
-        return cmd
+    def build_command(self, trial_params: dict[str, Any]) -> list[str]:
+        """Build the same validated command used by the core runtime."""
+        server = ManagedVLLMServer(
+            self.config,
+            host=self.host,
+            port=self.port,
+            trial_dir=self.log_dir,
+        )
+        return server.build_command(trial_params)
 
     async def start(
-        self, trial_params: Dict[str, Any], log_file: Optional[str] = None
-    ) -> subprocess.Popen:
-        """Start vLLM server with given parameters."""
-        if self.process and self.process.poll() is None:
-            raise RuntimeError("vLLM server is already running")
-
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-
-        if log_file is None:
-            trial_id = trial_params.get("_trial_id", "unknown")
-            log_path = self.log_dir / f"vllm_trial_{trial_id}.log"
-        else:
-            log_path = Path(log_file)
-
-        cmd = self.build_command(trial_params)
-        logger.info(f"Starting vLLM server: {' '.join(cmd)}")
-
-        env = os.environ.copy()
-        if len(self.config.gpu.device_ids) > 0:
-            visible_devices = ",".join(str(id) for id in self.config.gpu.device_ids)
-            env["CUDA_VISIBLE_DEVICES"] = visible_devices
-
-        with open(log_path, "w", encoding="utf-8") as f:
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=f,
-                stderr=subprocess.STDOUT,
-                env=env,
-                text=True,
+        self,
+        trial_params: dict[str, Any],
+        log_file: Optional[str] = None,
+    ) -> subprocess.Popen[str]:
+        """Start a trial in an isolated process group."""
+        trial_id = str(trial_params.get("_trial_id", "unknown"))
+        trial_dir = self.log_dir / f"trial_{trial_id}"
+        self._managed = ManagedVLLMServer(
+            self.config,
+            host=self.host,
+            port=self.port,
+            trial_dir=trial_dir,
+        )
+        process = await self._managed.start(trial_params)
+        self.process = process
+        self._trial_logs[trial_id] = self._managed.log_path
+        if log_file is not None:
+            logger.warning(
+                "The compatibility log_file override is ignored; authoritative log: %s",
+                self._managed.log_path,
             )
+        return process
 
-        logger.info(f"vLLM server started with PID {self.process.pid}")
-        logger.info(f"Logs written to: {log_path}")
+    async def wait_ready(self, timeout: int = 300, check_interval: float = 1.0) -> bool:
+        """Wait for readiness while also checking process exit."""
+        if self._managed is not None:
+            ready = await self._managed.wait_ready(timeout, check_interval)
+            self.process = self._managed.process
+            return ready
 
-        return self.process
-
-    async def wait_ready(
-        self, timeout: int = 300, check_interval: float = 10.0
-    ) -> bool:
-        """Wait for server to be ready."""
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            elapsed = 0
-            while elapsed < timeout:
+        # A small compatibility path keeps dependency-injected process tests useful.
+        deadline = asyncio.get_running_loop().time() + timeout
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
+            while asyncio.get_running_loop().time() < deadline:
                 if self.process is None or self.process.poll() is not None:
-                    logger.error("vLLM server process is not running")
                     return False
-
-                try:
-                    for endpoint in ["/health", "/v1/health", "/v1/models"]:
-                        try:
-                            response = await client.get(f"{self.base_url}{endpoint}")
-                            if response.status_code == 200:
-                                logger.info(
-                                    f"vLLM server ready at {self.base_url}{endpoint}"
-                                )
-                                return True
-                        except httpx.HTTPStatusError as e:
-                            if e.response.status_code != 404:
-                                logger.warning(
-                                    f"Health check {endpoint} failed: {e.response.status_code}"
-                                )
-                except (httpx.ConnectError, httpx.ConnectTimeout) as e:
-                    logger.debug(f"Connection error: {e}")
-
+                for endpoint in ("/health", "/v1/models"):
+                    try:
+                        response = await client.get(f"{self.base_url}{endpoint}")
+                        if response.status_code == 200:
+                            return True
+                    except httpx.RequestError:
+                        continue
                 await asyncio.sleep(check_interval)
-                elapsed += check_interval
-
-            logger.warning(f"vLLM server did not become ready within {timeout}s")
-            return False
+        return False
 
     async def stop(self) -> None:
-        """Stop vLLM server gracefully."""
-        if self.process is None:
+        """Stop the complete server process group."""
+        if self._managed is not None:
+            await self._managed.stop()
+            self._managed = None
+            self.process = None
             return
-
-        logger.info(f"Stopping vLLM server (PID {self.process.pid})")
-
-        self.process.terminate()
-
-        try:
-            self.process.wait(timeout=30)
-            logger.info("vLLM server stopped gracefully")
-        except subprocess.TimeoutExpired:
-            logger.warning("vLLM server did not stop gracefully, killing")
-            self.process.kill()
-            self.process.wait()
-
+        if self.process is not None and self.process.poll() is None:
+            self.process.terminate()
+            try:
+                await asyncio.wait_for(asyncio.to_thread(self.process.wait), 30)
+            except asyncio.TimeoutError:
+                self.process.kill()
+                await asyncio.to_thread(self.process.wait)
         self.process = None
 
     def is_running(self) -> bool:
-        """Check if server process is running."""
         return self.process is not None and self.process.poll() is None
 
     def get_log_file(self, trial_id: str) -> Path:
-        """Get log file path for a trial."""
-        return self.log_dir / f"vllm_trial_{trial_id}.log"
+        return self._trial_logs.get(
+            str(trial_id), self.log_dir / f"trial_{trial_id}" / "server.log"
+        )
 
 
 async def test_server_connection(base_url: str, timeout: int = 10) -> bool:
-    """Test if vLLM server is responsive."""
+    """Return whether a vLLM health endpoint responds successfully."""
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(f"{base_url}/health")
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+            response = await client.get(f"{base_url.rstrip('/')}/health")
             return response.status_code == 200
-    except Exception:
+    except httpx.RequestError:
         return False

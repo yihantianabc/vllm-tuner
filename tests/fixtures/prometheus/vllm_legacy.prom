@@ -1,0 +1,21 @@
+# TYPE vllm_num_requests_running gauge
+vllm_num_requests_running{model_name="legacy"} 1
+# TYPE vllm_num_requests_waiting gauge
+vllm_num_requests_waiting{model_name="legacy"} 4
+# TYPE vllm_gpu_cache_usage_perc gauge
+vllm_gpu_cache_usage_perc{model_name="legacy"} 0.9
+# TYPE vllm_num_preemptions counter
+vllm_num_preemptions{model_name="legacy"} 3
+# TYPE vllm_prompt_tokens_total counter
+vllm_prompt_tokens_total{model_name="legacy"} 90
+# TYPE vllm_generation_tokens_total counter
+vllm_generation_tokens_total{model_name="legacy"} 45
+# TYPE vllm_prefix_cache_queries_total counter
+vllm_prefix_cache_queries_total{model_name="legacy"} 20
+# TYPE vllm_prefix_cache_hits_total counter
+vllm_prefix_cache_hits_total{model_name="legacy"} 12
+# TYPE vllm_time_per_output_token_seconds histogram
+vllm_time_per_output_token_seconds_bucket{le="0.02"} 4
+vllm_time_per_output_token_seconds_bucket{le="+Inf"} 5
+vllm_time_per_output_token_seconds_sum 0.08
+vllm_time_per_output_token_seconds_count 5

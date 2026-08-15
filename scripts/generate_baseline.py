@@ -330,7 +330,6 @@ class VLLMBaselineRunner:
         metrics_tracker.record_request(request_id)
 
         start_time = time.time()
-        ttft_recorded = False
         output_tokens = 0
 
         payload = {
@@ -352,7 +351,6 @@ class VLLMBaselineRunner:
                         first_chunk_time = time.time()
                         ttft = first_chunk_time - start_time
                         metrics_tracker.record_ttft(request_id, ttft)
-                        ttft_recorded = True
 
                     try:
                         chunk_str = chunk.decode("utf-8")
@@ -368,7 +366,6 @@ class VLLMBaselineRunner:
                     except Exception:
                         pass
 
-                completion_time = time.time()
                 metrics_tracker.record_completion(request_id, output_tokens)
 
         except httpx.TimeoutException:
@@ -476,9 +473,9 @@ class VLLMBaselineRunner:
                 "p50_latency_ms": self.metrics.metrics.get("p50_latency_ms", 0),
                 "p95_latency_ms": self.metrics.metrics.get("p95_latency_ms", 0),
                 "p99_latency_ms": self.metrics.metrics.get("p99_latency_ms", 0),
-                "peak_memory_mb": max(self.metrics.memory_samples)
-                if self.metrics.memory_samples
-                else 0,
+                "peak_memory_mb": (
+                    max(self.metrics.memory_samples) if self.metrics.memory_samples else 0
+                ),
                 "average_memory_mb": (
                     sum(self.metrics.memory_samples) / len(self.metrics.memory_samples)
                     if self.metrics.memory_samples
@@ -507,13 +504,6 @@ class VLLMBaselineRunner:
     def _generate_text_summary(self, output_dir: Path):
         """Generate human-readable text summary."""
         metrics_dict = self.metrics.to_dict()["metrics"]
-        yaml_data = {
-            "model": self.metrics.model,
-            "timestamp": self.metrics.timestamp,
-            "vllm_params": self.metrics.vllm_params,
-            "benchmark_params": self.metrics.benchmark_params,
-        }
-
         summary = f"""
 {"=" * 80}
 BASELINE METRICS FOR {self.metrics.model.upper()}
@@ -564,7 +554,6 @@ Generated: {self.metrics.timestamp}
         """Run the full baseline generation workflow."""
         logger.info(f"Starting baseline generation for {self.config.model}")
 
-        vllm_process = None
         stop_event = asyncio.Event()
 
         def cleanup():
@@ -573,7 +562,7 @@ Generated: {self.metrics.timestamp}
                 self.monitoring_task.cancel()
 
         try:
-            vllm_process = await self._start_vllm_server()
+            await self._start_vllm_server()
 
             prompts = self._load_prompts()
             warmup_prompts = prompts[: self.config.warmup]

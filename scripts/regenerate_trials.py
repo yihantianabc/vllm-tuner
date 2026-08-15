@@ -4,7 +4,6 @@
 import json
 import sys
 from pathlib import Path
-from datetime import datetime
 
 import optuna
 
@@ -39,9 +38,9 @@ def regenerate_trials_from_db(
             "metrics": trial.user_attrs.get("metrics", {}),
             "state": str(trial.state),
             "datetime_start": trial.datetime_start.isoformat() if trial.datetime_start else None,
-            "datetime_complete": trial.datetime_complete.isoformat()
-            if trial.datetime_complete
-            else None,
+            "datetime_complete": (
+                trial.datetime_complete.isoformat() if trial.datetime_complete else None
+            ),
         }
         all_trials.append(trial_data)
 
@@ -59,12 +58,12 @@ def regenerate_trials_from_db(
             "parameters": best_trial.params,
             "metrics": best_trial.user_attrs.get("metrics", {}),
             "state": str(best_trial.state),
-            "datetime_start": best_trial.datetime_start.isoformat()
-            if best_trial.datetime_start
-            else None,
-            "datetime_complete": best_trial.datetime_complete.isoformat()
-            if best_trial.datetime_complete
-            else None,
+            "datetime_start": (
+                best_trial.datetime_start.isoformat() if best_trial.datetime_start else None
+            ),
+            "datetime_complete": (
+                best_trial.datetime_complete.isoformat() if best_trial.datetime_complete else None
+            ),
         }
     else:
         best_trials = study.best_trials
@@ -74,12 +73,14 @@ def regenerate_trials_from_db(
             "parameters": best_trials[0].params,
             "metrics": best_trials[0].user_attrs.get("metrics", {}),
             "state": str(best_trials[0].state),
-            "datetime_start": best_trials[0].datetime_start.isoformat()
-            if best_trials[0].datetime_start
-            else None,
-            "datetime_complete": best_trials[0].datetime_complete.isoformat()
-            if best_trials[0].datetime_complete
-            else None,
+            "datetime_start": (
+                best_trials[0].datetime_start.isoformat() if best_trials[0].datetime_start else None
+            ),
+            "datetime_complete": (
+                best_trials[0].datetime_complete.isoformat()
+                if best_trials[0].datetime_complete
+                else None
+            ),
         }
 
     summary_data = {

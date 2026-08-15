@@ -3,21 +3,18 @@
 import asyncio
 import json
 import logging
+import math
+import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Any, Mapping, Optional
 
 import typer
 
 from vllm_tuner.config.validation import (
+    TunerSettings,
     load_yaml_config,
     validate_study_name,
-    create_study_dirs,
-    TunerSettings,
 )
-from vllm_tuner.reporting.dashboard import ProgressDashboard
-from vllm_tuner.reporting.export import export_study_summary
-from vllm_tuner.reporting.html import generate_html_report
-from vllm_tuner.tuner.study_manager import StudyManager
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -33,6 +30,16 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+DEFAULT_RESULTS_ROOT = "/root/autodl-tmp/slotune-results"
+AGGREGATE_TABLES = {
+    "trials": "trials.parquet",
+    "repetitions": "repeated-results.parquet",
+    "holdout": "holdout-results.parquet",
+    "candidate_validation": "candidate-validation.parquet",
+    "capacity_sweep": "capacity-sweep.parquet",
+    "capacity_sweep_summary": "capacity-sweep-summary.parquet",
+}
 
 
 @app.command()
@@ -67,126 +74,86 @@ def tune(
         help="Enable progress bar (disabled by default)",
     ),
     generate_baseline: bool = typer.Option(
-        True,
+        False,
         "--baseline/--no-baseline",
-        help="Generate baseline metrics before optimization",
+        help="Deprecated; the equal-budget default method is always the baseline",
+    ),
+    results_root: str = typer.Option(
+        DEFAULT_RESULTS_ROOT,
+        "--results-root",
+        help="Data-disk root for immutable experiment artifacts",
+    ),
+    trace: Optional[str] = typer.Option(
+        None,
+        "--trace",
+        help="Optional fixed search JSONL trace",
+    ),
+    holdout_trace: Optional[str] = typer.Option(
+        None,
+        "--holdout-trace",
+        help="Optional fixed holdout JSONL trace",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Resume only after validating the immutable manifest and cached trial evidence",
+    ),
+    allow_dirty_source: bool = typer.Option(
+        False,
+        "--allow-dirty-source",
+        help="Development only: permit an uncommitted source tree (formal runs require clean Git)",
     ),
 ):
-    """
-    Run a tuning study to optimize vLLM parameters.
-    """
+    """Run a complete SLO-goodput search, repeat, holdout, and report experiment."""
     if study_name is None:
-        study_name = "default_tune"
+        study_name = "slotune"
 
     study_name = validate_study_name(study_name)
-    logger.info(f"Starting tune study: {study_name}")
+    logger.info("Starting SLOTune experiment: %s", study_name)
 
     try:
         config_obj = load_yaml_config(config)
         if model:
             config_obj.model = model
-        if gpu_count:
-            config_obj.gpu.count = gpu_count
-
-        dirs = create_study_dirs(study_name, settings)
-        logger.info(f"Study directories created: {dirs}")
-
-        # Generate baseline BEFORE optimization
-        if generate_baseline and config_obj.baseline.enabled:
-            typer.echo("\n" + "=" * 80)
-            typer.echo("GENERATING BASELINE METRICS")
-            typer.echo("=" * 80 + "\n")
-
-            try:
-                baseline_output_dir = dirs["study"] / "baseline"
-                from vllm_tuner.baseline.runner import generate_baseline_from_config
-
-                async def run_baseline():
-                    await generate_baseline_from_config(config_obj, baseline_output_dir)
-
-                asyncio.run(run_baseline())
-
-                typer.echo(f"\n✓ Baseline saved to: {baseline_output_dir}")
-
-                # Print quick summary
-                baseline_file = baseline_output_dir / "baseline_summary.txt"
-                if baseline_file.exists():
-                    with open(baseline_file, encoding="utf-8") as f:
-                        typer.echo(f.read())
-
-                typer.echo("\n" + "=" * 80)
-                typer.echo("STARTING OPTIMIZATION")
-                typer.echo("=" * 80 + "\n")
-
-            except Exception as e:
-                logger.error(f"Baseline generation failed: {e}")
-                if generate_baseline:  # If explicitly requested, abort
-                    raise typer.Exit(1)
-                else:  # If enabled by default, just warn and continue
-                    logger.warning("Continuing without baseline...")
-                    typer.echo(
-                        "\n⚠ Baseline generation failed, continuing without baseline",
-                        err=True,
-                    )
-
-        study_manager = StudyManager(config_obj, study_name, dirs["study"])
-
-        if with_progress:
-            dashboard = ProgressDashboard(study_name)
-            dashboard.start(total_trials=config_obj.study.min_trials)
-
-            async def run_with_progress():
-                result = await study_manager.run_study()
-                dashboard.stop()
-                return result
-
-            asyncio.run(run_with_progress())
-        else:
-            asyncio.run(study_manager.run_study())
-
-        summary = study_manager.get_study_summary()
-
-        typer.echo(f"\n✓ Study '{study_name}' completed successfully!")
-        typer.echo(
-            f"  Best throughput: {summary.get('best_trial', {}).get('metrics', {}).get('throughput_requests_per_sec', 0):.2f} req/s"
-        )
-        typer.echo(
-            f"  Best latency: {summary.get('best_trial', {}).get('metrics', {}).get('avg_latency_ms', 0):.2f} ms"
-        )
-
-        exported = export_study_summary(
-            summary,
-            study_manager.optimizer.get_all_trials(),
-            dirs["configs"],
-        )
-
-        typer.echo("\nConfiguration saved to:")
-        for key, path in exported.items():
-            typer.echo(f"  {path}")
-
-        baseline_data = None
-        baseline_file = dirs["study"] / "baseline" / "baseline_metrics.json"
-        if baseline_file.exists():
-            try:
-                with open(baseline_file, encoding="utf-8") as f:
-                    baseline_full = json.load(f)
-                    baseline_data = baseline_full.get("metrics", {})
-                    logger.info("Loaded baseline metrics for reporting")
-            except Exception as e:
-                logger.warning(f"Failed to load baseline metrics: {e}")
-
-        try:
-            html_path = dirs["reports"] / "report.html"
-            generate_html_report(
-                study_name,
-                dirs["reports"],
-                summary,
-                study_manager.optimizer.get_all_trials(),
-                baseline_data=baseline_data,
+        if resume:
+            config_obj.study.resume = True
+        if gpu_count is not None and gpu_count != 1:
+            raise ValueError("SLOTune core supports exactly one GPU")
+        if generate_baseline:
+            typer.echo(
+                "The separate legacy baseline is disabled; method=default uses the same trial "
+                "budget as random and TPE."
             )
-            typer.echo(f"\nHTML report: {html_path}")
-        except Exception as e:
-            logger.warning(f"Failed to generate HTML report: {e}")
+        if with_progress:
+            typer.echo("Progress is recorded in per-trial status.json artifacts.")
+
+        from vllm_tuner.experiment.runner import SLOTuneExperimentRunner
+
+        runner = SLOTuneExperimentRunner(
+            config_obj,
+            study_name,
+            results_root=results_root,
+            repository=Path.cwd(),
+            trace_path=trace,
+            holdout_trace_path=holdout_trace,
+            require_clean_source=not allow_dirty_source,
+        )
+        summary = asyncio.run(runner.run())
+        best = summary.get("best")
+        typer.echo(f"\nSLOTune experiment '{study_name}' completed.")
+        if best:
+            typer.echo(
+                "Best validated SLO goodput: "
+                f"{_display(best.get('goodput_requests_per_sec'))} requests/s"
+            )
+            typer.echo(f"Parameters: {best.get('parameters', {})}")
+        else:
+            typer.echo(
+                "No strictly validated candidate was found; inspect search_best, "
+                "candidate_validation, and structured failure artifacts."
+            )
+        typer.echo(f"Artifacts: {runner.artifacts.root}")
+        typer.echo(f"Report: {summary['report']['html']}")
 
     except FileNotFoundError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -198,6 +165,317 @@ def tune(
         logger.error(f"Tune command failed: {e}", exc_info=True)
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
+
+
+def _experiment_directory(results_root: str, study_name: str) -> Path:
+    """Resolve one sanitized experiment under the selected results root."""
+    return Path(results_root).expanduser().resolve() / validate_study_name(study_name)
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    """Read a JSON object with an artifact-specific error message."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Invalid JSON artifact {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"Expected a JSON object in {path}")
+    return value
+
+
+def _load_slotune_summary(experiment_dir: Path) -> dict[str, Any]:
+    """Load only the current immutable experiment layout."""
+    summary_path = experiment_dir / "summary.json"
+    if not summary_path.exists():
+        legacy_path = experiment_dir / "configs" / "summary.json"
+        if legacy_path.exists():
+            raise ValueError(
+                f"Legacy study layout detected at {legacy_path}; this command expects "
+                "a SLOTune experiment summary at <results-root>/<experiment>/summary.json"
+            )
+        raise FileNotFoundError(f"SLOTune summary not found: {summary_path}")
+    summary = _read_json_object(summary_path)
+    if "experiment_id" not in summary or "manifest" not in summary:
+        raise ValueError(
+            f"{summary_path} is not a SLOTune experiment summary; legacy and current "
+            "study formats are not mixed"
+        )
+    if not isinstance(summary["manifest"], dict):
+        raise ValueError(f"{summary_path} contains a non-object manifest")
+    return summary
+
+
+def _read_aggregate_tables(experiment_dir: Path) -> dict[str, dict[str, Any]]:
+    """Read aggregate Parquet tables while representing missing data explicitly."""
+    import pandas as pd  # type: ignore[import-untyped]
+
+    tables: dict[str, dict[str, Any]] = {}
+    for label, filename in AGGREGATE_TABLES.items():
+        path = experiment_dir / "aggregate" / filename
+        record: dict[str, Any] = {
+            "path": str(path.relative_to(experiment_dir)),
+            "available": False,
+            "row_count": None,
+            "records": [],
+        }
+        if not path.exists():
+            record["unavailable_reason"] = "artifact does not exist"
+        else:
+            try:
+                frame = pd.read_parquet(path)
+                records = json.loads(frame.to_json(orient="records"))
+            except Exception as error:
+                record["unavailable_reason"] = f"{type(error).__name__}: {error}"
+            else:
+                record.update(
+                    {
+                        "available": True,
+                        "row_count": len(frame),
+                        "records": records,
+                        "unavailable_reason": None,
+                    }
+                )
+        tables[label] = record
+    return tables
+
+
+def _report_artifacts(
+    experiment_dir: Path, summary: Mapping[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Resolve expected report files without trusting stale absolute paths alone."""
+    filenames = {
+        "html": "report.html",
+        "markdown": "report.md",
+        "plot_manifest": "plot-manifest.json",
+    }
+    report_value = summary.get("report")
+    report_mapping = report_value if isinstance(report_value, Mapping) else {}
+    artifacts: dict[str, dict[str, Any]] = {}
+    for label, filename in filenames.items():
+        expected = experiment_dir / "report" / filename
+        candidates = [expected]
+        configured = report_mapping.get(label)
+        if isinstance(configured, str):
+            configured_path = Path(configured).expanduser()
+            candidates.append(
+                configured_path
+                if configured_path.is_absolute()
+                else experiment_dir / configured_path
+            )
+        source = next((candidate for candidate in candidates if candidate.is_file()), expected)
+        artifacts[label] = {
+            "path": str(source),
+            "available": source.is_file(),
+            "unavailable_reason": None if source.is_file() else "artifact does not exist",
+        }
+    return artifacts
+
+
+def _validated_best(
+    summary: Mapping[str, Any],
+) -> tuple[Optional[dict[str, Any]], dict[str, list[Mapping[str, Any]]], str]:
+    """Trust only the runner's strict repeat-and-holdout validation verdict."""
+    empty_evidence: dict[str, list[Mapping[str, Any]]] = {"repeats": [], "holdouts": []}
+    raw_best = summary.get("best")
+    if not isinstance(raw_best, dict) or not raw_best:
+        return None, empty_evidence, "summary.best is empty; no feasible candidate was selected"
+    parameters = raw_best.get("parameters")
+    if not isinstance(parameters, dict) or not parameters:
+        return None, empty_evidence, "summary.best.parameters is empty"
+    if raw_best.get("status") not in {None, "COMPLETE"} or raw_best.get("feasible") is False:
+        return None, empty_evidence, "summary.best is not a COMPLETE feasible candidate"
+    if raw_best.get("validated") is not True:
+        return None, empty_evidence, "summary.best.validated is not true"
+    if raw_best.get("metric_provenance") != "median_of_complete_feasible_repeats":
+        return None, empty_evidence, "summary.best metric provenance is not repeat aggregation"
+    if any(
+        field in raw_best
+        for field in ("trial_id", "trial_number", "search_goodput_requests_per_sec")
+    ):
+        return None, empty_evidence, "summary.best mixes a search-trial identity or metric"
+
+    method = raw_best.get("method")
+    candidate = raw_best.get("candidate")
+    search_observation = raw_best.get("search_observation")
+    if (
+        not isinstance(method, str)
+        or not isinstance(candidate, str)
+        or not isinstance(search_observation, Mapping)
+        or not isinstance(search_observation.get("trial_number"), int)
+    ):
+        return None, empty_evidence, "summary.best candidate/search provenance is incomplete"
+    source_number = search_observation["trial_number"]
+    if (
+        search_observation.get("method") != method
+        or search_observation.get("parameters") != parameters
+    ):
+        return (
+            None,
+            empty_evidence,
+            "summary.best search_observation does not identify its candidate",
+        )
+
+    expected = raw_best.get("repeat_required")
+    if not isinstance(expected, int) or expected < 1:
+        return None, empty_evidence, "summary.best.repeat_required is invalid"
+    if raw_best.get("holdout_required") is not True:
+        return None, empty_evidence, "summary.best has no required holdout validation"
+
+    def matches(row: Any, *, holdout: bool) -> bool:
+        return (
+            isinstance(row, Mapping)
+            and row.get("parameters") == parameters
+            and row.get("method") == method
+            and row.get("repeat_of") == source_number
+            and row.get("holdout") is holdout
+            and row.get("status") == "COMPLETE"
+            and row.get("feasible") is True
+        )
+
+    raw_repetitions = summary.get("repetitions")
+    repetitions = raw_repetitions if isinstance(raw_repetitions, list) else []
+    matching_repeats = [row for row in repetitions if matches(row, holdout=False)]
+
+    raw_holdout = summary.get("holdout")
+    holdout_rows = raw_holdout if isinstance(raw_holdout, list) else []
+    matching_holdouts = [row for row in holdout_rows if matches(row, holdout=True)]
+    evidence = {"repeats": matching_repeats, "holdouts": matching_holdouts}
+    if len(matching_repeats) != expected or len(matching_holdouts) != expected:
+        return None, evidence, "summary does not contain every exact repeat and holdout row"
+    if (
+        raw_best.get("repeat_complete_feasible") != expected
+        or raw_best.get("holdout_complete_feasible") != expected
+    ):
+        return None, evidence, "summary.best repeat/holdout counts are inconsistent"
+
+    repeat_metrics = raw_best.get("repeat_metrics")
+    holdout_metrics = raw_best.get("holdout_metrics")
+    if not isinstance(repeat_metrics, Mapping) or not isinstance(holdout_metrics, Mapping):
+        return None, evidence, "summary.best repeat/holdout aggregates are missing"
+    for label, metrics in (("repeat", repeat_metrics), ("holdout", holdout_metrics)):
+        goodput = metrics.get("goodput_requests_per_sec")
+        if not isinstance(goodput, Mapping) or goodput.get("count") != expected:
+            return None, evidence, f"summary.best {label} goodput count is inconsistent"
+    for metric, aggregate in repeat_metrics.items():
+        if isinstance(aggregate, Mapping) and raw_best.get(metric) != aggregate.get("median"):
+            return None, evidence, f"summary.best canonical {metric} is not the repeat median"
+
+    validation_rows_value = summary.get("candidate_validation")
+    validation_rows = validation_rows_value if isinstance(validation_rows_value, list) else []
+    matching_validation = [
+        row
+        for row in validation_rows
+        if isinstance(row, Mapping)
+        and row.get("candidate") == candidate
+        and row.get("method") == method
+        and row.get("parameters") == parameters
+        and row.get("validated") is True
+    ]
+    if len(matching_validation) != 1:
+        return None, evidence, "summary candidate-validation verdict is missing or ambiguous"
+    return (
+        raw_best,
+        evidence,
+        "validated by the runner's strict repeat-and-all-holdout policy",
+    )
+
+
+def _display(value: Any) -> str:
+    if value is None:
+        return "unavailable"
+    if isinstance(value, float):
+        return f"{value:.3f}" if math.isfinite(value) else "unavailable"
+    return str(value)
+
+
+def _metric_summary(aggregates: Mapping[str, Any], metric: str) -> str:
+    record = aggregates.get(metric)
+    if not isinstance(record, Mapping):
+        return "unavailable"
+    return (
+        f"{_display(record.get('median'))} "
+        f"({_display(record.get('min'))}–{_display(record.get('max'))}; "
+        f"n={_display(record.get('count'))})"
+    )
+
+
+def _generate_slotune_markdown(
+    summary: Mapping[str, Any],
+    aggregates: Mapping[str, Mapping[str, Any]],
+    artifacts: Mapping[str, Mapping[str, Any]],
+) -> str:
+    """Render a concise current-schema summary without legacy metric aliases."""
+    manifest_value = summary.get("manifest")
+    manifest = manifest_value if isinstance(manifest_value, Mapping) else {}
+    best_value = summary.get("best")
+    best = best_value if isinstance(best_value, Mapping) else {}
+    validated, validation_evidence, validation_reason = _validated_best(summary)
+    repeat_metrics_value = best.get("repeat_metrics")
+    repeat_metrics = repeat_metrics_value if isinstance(repeat_metrics_value, Mapping) else {}
+    holdout_metrics_value = best.get("holdout_metrics")
+    holdout_metrics = holdout_metrics_value if isinstance(holdout_metrics_value, Mapping) else {}
+    search_value = best.get("search_observation")
+    search_observation = search_value if isinstance(search_value, Mapping) else {}
+    parameters = best.get("parameters")
+    parameter_rows = (
+        "\n".join(f"- `{key}`: `{value}`" for key, value in sorted(parameters.items()))
+        if isinstance(parameters, Mapping) and parameters
+        else "- unavailable"
+    )
+    aggregate_rows = "\n".join(
+        f"| {label} | {_display(record.get('row_count'))} | "
+        f"{'available' if record.get('available') else 'unavailable'} |"
+        for label, record in aggregates.items()
+    )
+    artifact_rows = "\n".join(
+        f"- {label}: `{record.get('path')}` "
+        f"({'available' if record.get('available') else 'unavailable'})"
+        for label, record in artifacts.items()
+    )
+    warnings_value = manifest.get("artifact_warnings")
+    warnings = warnings_value if isinstance(warnings_value, list) else []
+    warnings_text = "\n".join(f"- {warning}" for warning in warnings) or "- None recorded."
+    return f"""# SLOTune experiment: {summary.get('experiment_id', 'unknown')}
+
+## Identity
+
+- Model: `{manifest.get('model', 'unavailable')}`
+- Source commit: `{manifest.get('source_commit') or 'unavailable'}`
+- Trace SHA-256: `{manifest.get('trace_sha256', 'unavailable')}`
+- Holdout trace SHA-256: `{manifest.get('holdout_trace_sha256') or 'unavailable'}`
+
+## Best validated candidate
+
+- Candidate: `{best.get('candidate', 'unavailable')}`
+- Source search trial: `{search_observation.get('trial_id', 'unavailable')}`
+- Status: `{best.get('status', 'unavailable')}`
+- Feasible: `{_display(best.get('feasible'))}`
+- Metric provenance: `{best.get('metric_provenance', 'unavailable')}`
+- SLO goodput, repeat median (range): `{_metric_summary(repeat_metrics, 'goodput_requests_per_sec')}` requests/s
+- Achieved throughput, repeat median (range): `{_metric_summary(repeat_metrics, 'achieved_requests_per_sec')}` requests/s
+- p99 TTFT, repeat median (range): `{_metric_summary(repeat_metrics, 'p99_ttft_ms')}` ms
+- Holdout SLO goodput, median (range): `{_metric_summary(holdout_metrics, 'goodput_requests_per_sec')}` requests/s
+- Search SLO goodput (selection observation only): `{_display(search_observation.get('goodput_requests_per_sec'))}` requests/s
+- Holdout validation: `{'passed' if validated is not None else 'failed'}` ({validation_reason}; matching repeats: {len(validation_evidence['repeats'])}; matching holdouts: {len(validation_evidence['holdouts'])})
+
+### Parameters
+
+{parameter_rows}
+
+## Aggregate evidence
+
+| Table | Rows | Availability |
+|---|---:|---|
+{aggregate_rows}
+
+## Existing report artifacts
+
+{artifact_rows}
+
+## Artifact warnings
+
+{warnings_text}
+"""
 
 
 @app.command()
@@ -218,132 +496,75 @@ def report(
         None,
         "--output",
         "-o",
-        help="Output file path (default: reports/<study_name>/report.<format>)",
+        help="Output path; HTML defaults to the existing immutable report artifact",
+    ),
+    results_root: str = typer.Option(
+        DEFAULT_RESULTS_ROOT,
+        "--results-root",
+        help="Root containing immutable SLOTune experiment directories",
     ),
 ):
-    """
-    Generate a report from completed study.
-    """
-    study_name = validate_study_name(study_name)
-
+    """Reuse or export a report from one immutable SLOTune experiment."""
     try:
-        dirs = create_study_dirs(study_name, settings)
+        selected_format = format.lower()
+        if selected_format not in {"html", "json", "markdown"}:
+            raise ValueError(f"Unsupported format '{format}'")
+        experiment_dir = _experiment_directory(results_root, study_name)
+        summary = _load_slotune_summary(experiment_dir)
+        aggregates = _read_aggregate_tables(experiment_dir)
+        artifacts = _report_artifacts(experiment_dir, summary)
 
-        summary_path = dirs["configs"] / "summary.json"
-        trials_path = dirs["configs"] / "trials.json"
+        if selected_format == "html":
+            html_record = artifacts["html"]
+            if not html_record["available"]:
+                raise FileNotFoundError(
+                    f"Static SLOTune HTML report not found: {html_record['path']}"
+                )
+            source = Path(str(html_record["path"])).resolve()
+            if output is None:
+                typer.echo(f"HTML report reused: {source}")
+                return
+            destination = Path(output).expanduser().resolve()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination != source:
+                shutil.copy2(source, destination)
+                typer.echo(f"HTML report copied to: {destination}")
+            else:
+                typer.echo(f"HTML report reused: {source}")
+            return
 
-        if not summary_path.exists() or not trials_path.exists():
-            typer.echo(f"Error: Study data not found for '{study_name}'", err=True)
-            raise typer.Exit(1)
-
-        import json
-
-        with open(summary_path, "r", encoding="utf-8") as f:
-            summary = json.load(f)
-
-        with open(trials_path, "r", encoding="utf-8") as f:
-            trials_data = json.load(f)
-
-        baseline_data = None
-        baseline_file = dirs["study"] / "baseline" / "baseline_metrics.json"
-        if baseline_file.exists():
-            try:
-                with open(baseline_file, encoding="utf-8") as f:
-                    baseline_full = json.load(f)
-                    baseline_data = baseline_full.get("metrics", {})
-                    logger.info("Loaded baseline metrics for reporting")
-            except Exception as e:
-                logger.warning(f"Failed to load baseline metrics: {e}")
-
-        if output is None:
-            output = str(dirs["reports"] / f"report.{format}")
-
-        if format == "html":
-            generate_html_report(
-                study_name,
-                dirs["reports"],
-                summary,
-                trials_data,
-                baseline_data=baseline_data,
+        suffix = "json" if selected_format == "json" else "md"
+        destination = (
+            Path(output).expanduser().resolve()
+            if output is not None
+            else experiment_dir / "report" / f"report-export.{suffix}"
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if selected_format == "json":
+            payload = {
+                "schema": "slotune-experiment-report-v1",
+                "summary": summary,
+                "aggregates": aggregates,
+                "report_artifacts": artifacts,
+            }
+            destination.write_text(
+                json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+                encoding="utf-8",
             )
-            typer.echo(f"HTML report generated: {output}")
-        elif format == "json":
-            Path(output).parent.mkdir(parents=True, exist_ok=True)
-            with open(output, "w", encoding="utf-8") as f:
-                json.dump({"summary": summary, "trials": trials_data}, f, indent=2)
-            typer.echo(f"JSON report generated: {output}")
-        elif format == "markdown":
-            markdown = _generate_markdown_summary(summary, trials_data)
-            Path(output).parent.mkdir(parents=True, exist_ok=True)
-            with open(output, "w", encoding="utf-8") as f:
-                f.write(markdown)
-            typer.echo(f"Markdown report generated: {output}")
+            typer.echo(f"JSON report exported: {destination}")
         else:
-            typer.echo(f"Error: Unsupported format '{format}'", err=True)
-            raise typer.Exit(1)
-
-    except FileNotFoundError as e:
-        typer.echo(f"Error: {e}", err=True)
+            destination.write_text(
+                _generate_slotune_markdown(summary, aggregates, artifacts),
+                encoding="utf-8",
+            )
+            typer.echo(f"Markdown report exported: {destination}")
+    except (FileNotFoundError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(1)
-    except Exception as e:
-        logger.error(f"Report command failed: {e}", exc_info=True)
-        typer.echo(f"Error: {e}", err=True)
+    except Exception as error:
+        logger.error("Report command failed: %s", error, exc_info=True)
+        typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(1)
-
-
-def _generate_markdown_summary(
-    summary: dict,
-    trials_data: list[dict],
-) -> str:
-    """Generate markdown summary."""
-    markdown = f"""# vLLM Tuner Report: {summary.get("study_name", "Unknown")}
-
-## Study Summary
-
-- **Total Trials**: {summary.get("num_trials", 0)}
-- **Study Storage**: {summary.get("study_storage", "N/A")}
-
-## Best Configuration
-
-### Parameters
-"""
-
-    best = summary.get("best_trial", {})
-    params = best.get("parameters", {})
-
-    for key, value in params.items():
-        markdown += f"- **{key}**: {value}\n"
-
-    metrics = best.get("metrics", {})
-
-    markdown += f"""
-### Performance Metrics
-- **Throughput**: {metrics.get("throughput_requests_per_sec", 0):.2f} requests/sec
-- **Average Latency**: {metrics.get("avg_latency_ms", 0):.2f} ms
-- **P50 Latency**: {metrics.get("p50_latency_ms", 0):.2f} ms
-- **P95 Latency**: {metrics.get("p95_latency_ms", 0):.2f} ms
-- **P99 Latency**: {metrics.get("p99_latency_ms", 0):.2f} ms
-- **Token Throughput**: {metrics.get("throughput_tokens_per_sec", 0):.2f} tokens/sec
-
-## Trial Results
-
-"""
-
-    markdown += "| Trial # | Throughput (req/s) | Latency (ms) | State |\n"
-    markdown += "|---------|-------------------|-------------|-------|\n"
-
-    for trial in trials_data[:20]:
-        t_num = trial.get("trial_number", 0)
-        t_throughput = trial.get("metrics", {}).get("throughput_requests_per_sec", 0)
-        t_latency = trial.get("metrics", {}).get("avg_latency_ms", 0)
-        t_state = trial.get("state", "Unknown")
-
-        markdown += f"| {t_num} | {t_throughput:.2f} | {t_latency:.2f} | {t_state} |\n"
-
-    if len(trials_data) > 20:
-        markdown += f"\n*... and {len(trials_data) - 20} more trials*\n"
-
-    return markdown
 
 
 @app.command()
@@ -358,7 +579,7 @@ def export(
         None,
         "--output",
         "-o",
-        help="Output file path (default: configs/<study_name>/best.yaml)",
+        help="Output file path (default: <results-root>/<experiment>/best.<format>)",
     ),
     format: str = typer.Option(
         "yaml",
@@ -366,84 +587,158 @@ def export(
         "-f",
         help="Export format (yaml, json)",
     ),
+    results_root: str = typer.Option(
+        DEFAULT_RESULTS_ROOT,
+        "--results-root",
+        help="Root containing immutable SLOTune experiment directories",
+    ),
 ):
-    """
-    Export the best configuration from a study.
-    """
-    study_name = validate_study_name(study_name)
-    logger.info(f"Exporting best config from study: {study_name}")
-
+    """Export a best configuration only after successful holdout validation."""
     try:
-        dirs = create_study_dirs(study_name, settings)
-
-        summary_path = dirs["configs"] / "summary.json"
-
-        if not summary_path.exists():
-            typer.echo(f"Error: Study data not found for '{study_name}'", err=True)
-            raise typer.Exit(1)
-
-        import json
-
-        with open(summary_path, "r", encoding="utf-8") as f:
-            summary = json.load(f)
-
-        best = summary.get("best_trial", {})
-
-        if not best:
-            typer.echo(
-                f"Error: No successful trials found in study '{study_name}'", err=True
-            )
-            raise typer.Exit(1)
-
+        selected_format = format.lower()
+        if selected_format not in {"yaml", "json"}:
+            raise ValueError(f"Unsupported format '{format}'")
+        experiment_dir = _experiment_directory(results_root, study_name)
+        summary = _load_slotune_summary(experiment_dir)
+        best, validation_evidence, validation_reason = _validated_best(summary)
+        if best is None:
+            raise ValueError(f"Best configuration is not exportable: {validation_reason}")
         if output is None:
-            output = str(dirs["configs"] / f"best.{format}")
+            output_path = experiment_dir / f"best.{selected_format}"
+        else:
+            output_path = Path(output).expanduser().resolve()
 
         from vllm_tuner.reporting.export import export_best_config
 
-        export_best_config(best, Path(output), format)
-
-        typer.echo(f"Best configuration exported to: {output}")
-
-    except FileNotFoundError as e:
-        typer.echo(f"Error: {e}", err=True)
+        export_best_config(
+            best,
+            output_path,
+            selected_format,
+            experiment_id=str(summary["experiment_id"]),
+            manifest=(summary["manifest"] if isinstance(summary.get("manifest"), Mapping) else {}),
+            validation={
+                "validated": True,
+                "method": "strict repeat-and-all-holdout",
+                "matching_repeat_trial_ids": [
+                    row.get("trial_id") for row in validation_evidence["repeats"]
+                ],
+                "matching_holdout_trial_ids": [
+                    row.get("trial_id") for row in validation_evidence["holdouts"]
+                ],
+            },
+        )
+        typer.echo(f"Validated best configuration exported to: {output_path}")
+    except (FileNotFoundError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(1)
-    except Exception as e:
-        logger.error(f"Export command failed: {e}", exc_info=True)
-        typer.echo(f"Error: {e}", err=True)
+    except Exception as error:
+        logger.error("Export command failed: %s", error, exc_info=True)
+        typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(1)
 
 
 @app.command()
-def list_studies():
-    """
-    List all available studies.
-    """
-    studies_dir = Path(settings.study_output_dir)
-
-    if not studies_dir.exists():
+def list_studies(
+    results_root: str = typer.Option(
+        DEFAULT_RESULTS_ROOT,
+        "--results-root",
+        help="Root containing immutable SLOTune experiment directories",
+    ),
+):
+    """List immutable SLOTune experiments and identify legacy layouts explicitly."""
+    root = Path(results_root).expanduser().resolve()
+    if not root.exists():
         typer.echo("No studies found")
         return
-
-    studies = list(studies_dir.iterdir())
-
+    studies = sorted(
+        (
+            path
+            for path in root.iterdir()
+            if path.is_dir()
+            and (
+                (path / "summary.json").exists()
+                or (path / "manifest.json").exists()
+                or (path / "configs" / "summary.json").exists()
+            )
+        ),
+        key=lambda path: path.name,
+    )
     if not studies:
         typer.echo("No studies found")
         return
-
     typer.echo(f"Found {len(studies)} studies:")
     for study in studies:
-        typer.echo(f"  - {study.name}")
-        summary_path = study / "configs" / "summary.json"
-        if summary_path.exists():
-            import json
+        summary_path = study / "summary.json"
+        manifest_path = study / "manifest.json"
+        legacy_path = study / "configs" / "summary.json"
+        if not summary_path.exists() and not manifest_path.exists() and legacy_path.exists():
+            typer.echo(f"  - {study.name} [legacy layout]")
+            typer.echo("    Status: legacy summary present; not interpreted as SLOTune")
+            typer.echo(f"    Legacy summary: {legacy_path}")
+            continue
 
-            with open(summary_path, "r", encoding="utf-8") as f:
-                summary = json.load(f)
-            best = summary.get("best_trial", {})
-            metrics = best.get("metrics", {})
-            typer.echo(
-                f"    Throughput: {metrics.get('throughput_requests_per_sec', 0):.2f} req/s"
+        try:
+            summary = _read_json_object(summary_path) if summary_path.exists() else {}
+            if summary and ("experiment_id" not in summary or "manifest" not in summary):
+                raise ValueError("summary.json is not the SLOTune schema")
+            manifest = (
+                _read_json_object(manifest_path)
+                if manifest_path.exists()
+                else summary.get("manifest", {})
             )
+            if not isinstance(manifest, Mapping):
+                raise ValueError("manifest is not a JSON object")
+        except (OSError, ValueError) as error:
+            typer.echo(f"  - {study.name}")
+            typer.echo(f"    Status: ERROR ({error})")
+            continue
+
+        status = summary.get("status") if summary else None
+        if status is None and summary_path.exists():
+            status = "COMPLETE (summary.json present)"
+        if status is None:
+            status_files = sorted(
+                (study / "trials").glob("*/status.json"),
+                key=lambda path: path.stat().st_mtime,
+            )
+            if status_files:
+                try:
+                    status = _read_json_object(status_files[-1]).get("status")
+                except (OSError, ValueError):
+                    status = None
+        status = status or "INCOMPLETE (manifest present, summary absent)"
+        typer.echo(f"  - {study.name}")
+        typer.echo(f"    Status: {status}")
+        typer.echo(
+            "    Manifest: model={model}, created={created}, commit={commit}".format(
+                model=manifest.get("model", "unavailable"),
+                created=manifest.get("created_at", "unavailable"),
+                commit=manifest.get("source_commit") or "unavailable",
+            )
+        )
+        best_value = summary.get("best") if summary else None
+        if not isinstance(best_value, Mapping) or not best_value:
+            typer.echo("    Best: unavailable")
+            continue
+        validated, validation_evidence, validation_reason = _validated_best(summary)
+        typer.echo(
+            "    Best: trial={trial}, status={status}, goodput={goodput} req/s, "
+            "validated={validated}".format(
+                trial=best_value.get("candidate", "unavailable"),
+                status=best_value.get("status", "unavailable"),
+                goodput=_display(best_value.get("goodput_requests_per_sec")),
+                validated="yes" if validated is not None else "no",
+            )
+        )
+        typer.echo(
+            f"    Validation: {validation_reason}; "
+            f"matching repeats={len(validation_evidence['repeats'])}; "
+            f"matching holdouts={len(validation_evidence['holdouts'])}"
+        )
+        typer.echo(
+            "    Parameters: "
+            + json.dumps(best_value.get("parameters", {}), sort_keys=True, ensure_ascii=False)
+        )
 
 
 def main():

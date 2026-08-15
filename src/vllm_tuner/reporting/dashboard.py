@@ -12,6 +12,7 @@ from rich.progress import (
     BarColumn,
     TaskProgressColumn,
     TimeRemainingColumn,
+    TaskID,
 )
 from rich.table import Table
 
@@ -25,7 +26,7 @@ class ProgressDashboard:
         self.study_name = study_name
         self.console = Console()
         self.progress: Optional[Progress] = None
-        self.trial_task: Optional[int] = None
+        self.trial_task: Optional[TaskID] = None
         self.total_trials: int = 1
         self.current_trial: int = 0
         self.best_throughput = 0.0

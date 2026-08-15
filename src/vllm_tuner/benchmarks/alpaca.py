@@ -2,14 +2,13 @@
 
 import logging
 import random
-from typing import List, Dict, Any, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 try:
-    from datasets import load_dataset
+    from datasets import load_dataset  # type: ignore[import-untyped]
 except ImportError:
-    raise ImportError(
-        "datasets package is required. Install with: pip install datasets"
-    )
+    raise ImportError("datasets package is required. Install with: pip install datasets")
 
 from transformers import AutoTokenizer
 
@@ -27,7 +26,7 @@ class AlpacaWorkload(Workload):
     def __init__(self, config: WorkloadConfig):
         super().__init__(config)
         self._dataset = None
-        self.tokenizer: Optional[AutoTokenizer] = None
+        self.tokenizer: Optional[Any] = None
         self._prompt_lengths: Optional[List[int]] = None
 
     async def load(self) -> List[str]:
@@ -35,7 +34,22 @@ class AlpacaWorkload(Workload):
         logger.info(f"Loading Alpaca dataset: {self.config.dataset_name}")
 
         try:
-            dataset = load_dataset(self.config.dataset_name, split="train")
+            dataset_path = Path(self.config.dataset_name).expanduser()
+            if dataset_path.is_file():
+                dataset_format = {
+                    ".csv": "csv",
+                    ".json": "json",
+                    ".jsonl": "json",
+                }.get(dataset_path.suffix.lower())
+                if dataset_format is None:
+                    raise ValueError("Local datasets must use a .csv, .json, or .jsonl extension")
+                dataset = load_dataset(
+                    dataset_format,
+                    data_files=str(dataset_path),
+                    split="train",
+                )
+            else:
+                dataset = load_dataset(self.config.dataset_name, split="train")
             logger.info(f"Loaded {len(dataset)} examples from Alpaca dataset")
         except Exception as e:
             logger.error(f"Failed to load Alpaca dataset: {e}")
@@ -109,7 +123,9 @@ class AlpacaWorkload(Workload):
 
         for min_len, max_len in length_ranges:
             range_prompts = [
-                p for p, l in zip(prompts, prompt_lengths) if min_len <= l <= max_len
+                prompt
+                for prompt, length in zip(prompts, prompt_lengths)
+                if min_len <= length <= max_len
             ]
 
             if len(range_prompts) > samples_per_range:

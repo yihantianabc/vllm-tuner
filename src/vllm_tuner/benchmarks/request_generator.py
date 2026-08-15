@@ -1,22 +1,25 @@
-"""Generate and execute benchmark requests against vLLM server."""
+"""Compatibility request API backed by the trustworthy streaming client."""
 
-import asyncio
+from __future__ import annotations
+
 import logging
-import time
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, AsyncIterator
+from typing import Any, AsyncIterator, Optional
 
 import httpx
 
 from vllm_tuner.profiling.vllm_metrics import VLLMMetricsTracker
 from vllm_tuner.vllm.launcher import VLLMLauncher
 
+from .models import BenchmarkResult, RequestSpec
+from .sse_client import SSEBenchmarkClient, TokenCounter
+
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class BenchmarkRequest:
-    """Container for a single benchmark request."""
+    """Historical request shape retained for source compatibility."""
 
     request_id: str
     prompt: str
@@ -24,49 +27,62 @@ class BenchmarkRequest:
     temperature: float = 1.0
     top_p: float = 1.0
 
+    def to_request_spec(self, model: Optional[str] = None) -> RequestSpec:
+        """Convert to the typed benchmark-core request."""
+
+        return RequestSpec(
+            request_id=self.request_id,
+            prompt=self.prompt,
+            model=model,
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+            top_p=self.top_p,
+        )
+
 
 class RequestGenerator:
-    """Generate benchmark requests from prompts."""
+    """Generate legacy or typed requests from prompts."""
 
     def __init__(
         self,
-        prompts: List[str],
+        prompts: list[str],
         max_tokens: int = 256,
         temperature: float = 1.0,
         top_p: float = 1.0,
-    ):
+    ) -> None:
         self.prompts = prompts
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.top_p = top_p
 
-    def generate_requests(self) -> List[BenchmarkRequest]:
-        """Generate benchmark requests from prompts."""
+    def generate_requests(self) -> list[BenchmarkRequest]:
+        """Generate requests using the historical public type."""
+
         return [
             BenchmarkRequest(
-                request_id=f"req_{i}",
+                request_id=f"req_{index}",
                 prompt=prompt,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
                 top_p=self.top_p,
             )
-            for i, prompt in enumerate(self.prompts)
+            for index, prompt in enumerate(self.prompts)
         ]
 
-    def async_requests(self) -> AsyncIterator[BenchmarkRequest]:
-        """Async iterator over requests."""
-        for i, prompt in enumerate(self.prompts):
-            yield BenchmarkRequest(
-                request_id=f"req_{i}",
-                prompt=prompt,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                top_p=self.top_p,
-            )
+    def generate_specs(self, model: Optional[str] = None) -> list[RequestSpec]:
+        """Generate typed requests for the new streaming core."""
+
+        return [request.to_request_spec(model) for request in self.generate_requests()]
+
+    async def async_requests(self) -> AsyncIterator[BenchmarkRequest]:
+        """Iterate over historical request objects asynchronously."""
+
+        for request in self.generate_requests():
+            yield request
 
 
 class BenchmarkClient:
-    """HTTP client for benchmarking vLLM server."""
+    """Historical client facade delegating to :class:`SSEBenchmarkClient`."""
 
     def __init__(
         self,
@@ -74,101 +90,59 @@ class BenchmarkClient:
         metrics_tracker: VLLMMetricsTracker,
         model_name: str = "gpt2",
         timeout: int = 300,
-    ):
+        *,
+        token_counter: Optional[TokenCounter] = None,
+        tokenizer: Optional[object] = None,
+    ) -> None:
         self.base_url = base_url
         self.metrics_tracker = metrics_tracker
         self.model_name = model_name
         self.timeout = timeout
+        self.streaming_client = SSEBenchmarkClient(
+            base_url,
+            model_name,
+            timeout=float(timeout),
+            token_counter=token_counter,
+            tokenizer=tokenizer,
+        )
 
     async def send_request(
         self,
         request: BenchmarkRequest,
         client: httpx.AsyncClient,
-    ) -> Optional[Dict[str, Any]]:
-        """Send a single completion request to vLLM."""
-        url = f"{self.base_url}/v1/completions"
+    ) -> Optional[dict[str, Any]]:
+        """Send one real SSE request and return the historical result mapping."""
 
-        self.metrics_tracker.record_request(request.request_id)
-
-        start_time = time.time()
-        ttft_recorded = False
-
-        payload = {
-            "model": self.model_name,
-            "prompt": request.prompt,
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
-            "top_p": request.top_p,
-        }
-
-        try:
-            async with client.stream(
-                "POST", url, json=payload, timeout=self.timeout
-            ) as response:
-                response.raise_for_status()
-
-                first_chunk_time = None
-                output_tokens = 0
-
-                async for chunk in response.aiter_bytes():
-                    if first_chunk_time is None:
-                        first_chunk_time = time.time()
-                        ttft = first_chunk_time - start_time
-                        self.metrics_tracker.record_ttft(request.request_id, ttft)
-                        ttft_recorded = True
-
-                    try:
-                        chunk_str = chunk.decode("utf-8")
-                        if "choices" in chunk_str:
-                            import json
-
-                            try:
-                                data = json.loads(chunk_str)
-                                if "choices" in data and data["choices"]:
-                                    text = data["choices"][0].get("text", "")
-                                    if text:
-                                        output_tokens += 1
-                            except json.JSONDecodeError:
-                                pass
-                    except Exception:
-                        pass
-
-                completion_time = time.time()
-                self.metrics_tracker.record_completion(
-                    request.request_id, output_tokens
-                )
-
-                return {
-                    "request_id": request.request_id,
-                    "success": True,
-                    "output_tokens": output_tokens,
-                    "duration": completion_time - start_time,
-                }
-
-        except httpx.TimeoutException:
-            logger.warning(f"Request {request.request_id} timed out")
-            self.metrics_tracker.record_error("timeout")
-            return None
-
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Request {request.request_id} failed: {e.response.status_code}"
+        result = await self.streaming_client.send_request(
+            request.to_request_spec(self.model_name), client
+        )
+        self.metrics_tracker.record_result(result)
+        if result.http_status == 429:
+            self.metrics_tracker.record_preemption()
+        if not result.success:
+            logger.warning(
+                "Request %s failed (%s): %s",
+                request.request_id,
+                result.error_type,
+                result.error_message,
             )
-            self.metrics_tracker.record_error("http")
-
-            if e.response.status_code == 429:
-                self.metrics_tracker.record_preemption()
-
             return None
 
-        except Exception as e:
-            logger.error(f"Request {request.request_id} error: {e}")
-            self.metrics_tracker.record_error("general")
-            return None
+        return {
+            "request_id": request.request_id,
+            "success": True,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "duration": result.e2e_ns / 1_000_000_000 if result.e2e_ns is not None else None,
+            "ttft": result.ttft_ns / 1_000_000_000 if result.ttft_ns is not None else None,
+            "tpot": result.tpot_ns / 1_000_000_000 if result.tpot_ns is not None else None,
+            "itl": [value / 1_000_000_000 for value in result.itl_ns],
+            "request_result": result.to_dict(),
+        }
 
 
 class BenchmarkRunner:
-    """Run benchmark with concurrent requests."""
+    """Historical runner facade using the new streaming scheduler and reducer."""
 
     def __init__(
         self,
@@ -176,99 +150,75 @@ class BenchmarkRunner:
         concurrency: int = 10,
         warmup_requests: int = 5,
         max_tokens: int = 256,
-    ):
+    ) -> None:
         self.launcher = launcher
         self.concurrency = concurrency
         self.warmup_requests = warmup_requests
         self.max_tokens = max_tokens
         self.metrics_tracker = VLLMMetricsTracker()
+        self.last_result: Optional[BenchmarkResult] = None
 
     async def run_benchmark(
         self,
-        prompts: List[str],
+        prompts: list[str],
         include_warmup: bool = True,
-    ) -> Dict[str, Any]:
-        """Run benchmark against vLLM server."""
+    ) -> dict[str, Any]:
+        """Run a measured SSE benchmark while preserving the old return shape."""
+
         logger.info(
-            f"Starting benchmark with {len(prompts)} prompts, concurrency={self.concurrency}"
+            "Starting benchmark with %s prompts, concurrency=%s",
+            len(prompts),
+            self.concurrency,
         )
-
-        if include_warmup and self.warmup_requests > 0:
-            await self._run_warmup(prompts[: self.warmup_requests])
-
-        self.metrics_tracker.start_benchmark()
-
         generator = RequestGenerator(prompts, max_tokens=self.max_tokens)
-        requests = generator.generate_requests()
-
-        client = BenchmarkClient(
+        client = SSEBenchmarkClient(
             self.launcher.base_url,
-            self.metrics_tracker,
-            model_name=self.launcher.config.model,
+            model=self.launcher.config.model,
         )
-
-        async with httpx.AsyncClient(timeout=300) as http_client:
-            semaphore = asyncio.Semaphore(self.concurrency)
-
-            async def execute_request(
-                req: BenchmarkRequest,
-            ) -> Optional[Dict[str, Any]]:
-                async with semaphore:
-                    return await client.send_request(req, http_client)
-
-            tasks = [execute_request(req) for req in requests]
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-        self.metrics_tracker.end_benchmark()
-
+        self.last_result = await client.run(
+            generator.generate_specs(self.launcher.config.model),
+            warmup_requests=self.warmup_requests if include_warmup else 0,
+            max_concurrency=self.concurrency,
+        )
+        self.metrics_tracker.record_benchmark_result(self.last_result)
         summary = self.metrics_tracker.get_summary()
         logger.info(
-            f"Benchmark completed: {summary['requests_completed']}/{summary['num_requests']} requests completed"
+            "Benchmark completed: %s/%s requests completed",
+            summary["requests_completed"],
+            summary["num_requests"],
         )
-
         return summary
 
-    async def _run_warmup(self, prompts: List[str]) -> None:
-        """Run warmup requests."""
+    async def _run_warmup(self, prompts: list[str]) -> None:
+        """Run standalone warmup requests without adding them to measurements."""
+
         if not prompts:
             return
-
-        logger.info(f"Running {len(prompts)} warmup requests...")
-
-        warmup_metrics = VLLMMetricsTracker()
-        warmup_metrics.start_benchmark()
-
         generator = RequestGenerator(prompts, max_tokens=self.max_tokens)
-        requests = generator.generate_requests()
-
-        client = BenchmarkClient(
+        client = SSEBenchmarkClient(
             self.launcher.base_url,
-            warmup_metrics,
-            model_name=self.launcher.config.model,
+            model=self.launcher.config.model,
+        )
+        await client.run(
+            generator.generate_specs(self.launcher.config.model),
+            max_concurrency=self.concurrency,
         )
 
-        async with httpx.AsyncClient(timeout=300) as http_client:
-            for req in requests:
-                await client.send_request(req, http_client)
+    def get_metrics(self) -> dict[str, Any]:
+        """Get the most recent historical summary."""
 
-        warmup_metrics.end_benchmark()
-        logger.info("Warmup completed")
-
-    def get_metrics(self) -> Dict[str, Any]:
-        """Get benchmark metrics."""
         return self.metrics_tracker.get_summary()
 
 
 class ResultCollector:
-    """Collect and aggregate benchmark results."""
+    """Collect and aggregate benchmark results across tuning trials."""
 
-    def __init__(self):
-        self.results: List[Dict[str, Any]] = []
+    def __init__(self) -> None:
+        self.results: list[dict[str, Any]] = []
 
-    def add_result(
-        self, trial_id: str, result: Dict[str, Any], params: Dict[str, Any]
-    ) -> None:
+    def add_result(self, trial_id: str, result: dict[str, Any], params: dict[str, Any]) -> None:
         """Add a trial result."""
+
         self.results.append(
             {
                 "trial_id": trial_id,
@@ -277,51 +227,44 @@ class ResultCollector:
             }
         )
 
-    def get_best(
-        self, objective: str = "throughput_requests_per_sec"
-    ) -> Optional[Dict[str, Any]]:
+    def get_best(self, objective: str = "throughput_requests_per_sec") -> Optional[dict[str, Any]]:
         """Get the best result by objective."""
+
         if not self.results:
             return None
+        return max(self.results, key=lambda value: value["metrics"].get(objective, 0.0))
 
-        best = max(self.results, key=lambda x: x["metrics"].get(objective, 0.0))
-        return best
+    def get_summary(self) -> dict[str, Any]:
+        """Get summary statistics across trials."""
 
-    def get_summary(self) -> Dict[str, Any]:
-        """Get summary of all results."""
         if not self.results:
             return {}
-
         throughputs = [
-            r["metrics"].get("throughput_requests_per_sec", 0) for r in self.results
+            result["metrics"].get("throughput_requests_per_sec", 0) for result in self.results
         ]
-        latencies = [r["metrics"].get("avg_latency_ms", 0) for r in self.results]
-
+        latencies = [result["metrics"].get("avg_latency_ms", 0) for result in self.results]
         return {
             "num_trials": len(self.results),
-            "throughput_mean": sum(throughputs) / len(throughputs)
-            if throughputs
-            else 0,
-            "throughput_max": max(throughputs) if throughputs else 0,
-            "throughput_min": min(throughputs) if throughputs else 0,
-            "latency_mean": sum(latencies) / len(latencies) if latencies else 0,
-            "latency_min": min(latencies) if latencies else 0,
+            "throughput_mean": sum(throughputs) / len(throughputs),
+            "throughput_max": max(throughputs),
+            "throughput_min": min(throughputs),
+            "latency_mean": sum(latencies) / len(latencies),
+            "latency_min": min(latencies),
         }
 
-    def to_dataframe(self):
-        """Convert results to pandas DataFrame."""
+    def to_dataframe(self) -> Optional[Any]:
+        """Convert results to a pandas DataFrame when pandas is installed."""
+
         try:
-            import pandas as pd
-
-            rows = []
-            for r in self.results:
-                row = {"trial_id": r["trial_id"]}
-                row.update(r["parameters"])
-                row.update(r["metrics"])
-                rows.append(row)
-
-            return pd.DataFrame(rows)
-
+            import pandas as pd  # type: ignore[import-untyped]
         except ImportError:
             logger.warning("pandas not available, cannot create DataFrame")
             return None
+
+        rows = []
+        for result in self.results:
+            row = {"trial_id": result["trial_id"]}
+            row.update(result["parameters"])
+            row.update(result["metrics"])
+            rows.append(row)
+        return pd.DataFrame(rows)

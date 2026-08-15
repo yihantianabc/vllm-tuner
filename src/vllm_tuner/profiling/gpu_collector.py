@@ -1,5 +1,4 @@
-"""GPU profiling and monitoring using NVML.
-"""
+"""GPU profiling and monitoring using NVML."""
 
 import asyncio
 import logging
@@ -7,7 +6,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Dict, List, Optional
 
-import pynvml
+import pynvml  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 
@@ -173,9 +172,9 @@ class GPUCollector:
             return {
                 "total_memory_used_mb": total_memory_used,
                 "total_memory_total_mb": total_memory_total,
-                "aggregate_memory_utilization": total_memory_used / total_memory_total
-                if total_memory_total > 0
-                else 0.0,
+                "aggregate_memory_utilization": (
+                    total_memory_used / total_memory_total if total_memory_total > 0 else 0.0
+                ),
                 "average_gpu_utilization": total_gpu_util / device_count,
                 "max_temperature_c": max_temperature,
                 "total_power_w": total_power,

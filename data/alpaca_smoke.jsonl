@@ -1,0 +1,2 @@
+{"instruction":"Explain why the sky appears blue in one sentence.","input":"","output":"The sky appears blue because air molecules scatter shorter blue wavelengths more strongly than longer wavelengths."}
+{"instruction":"Add the two integers and return only the result.","input":"17 + 25","output":"42"}
