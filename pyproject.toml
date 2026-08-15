@@ -3,7 +3,7 @@ name = "vllm-tuner"
 dynamic = ["version"]
 description = "An intelligent auto-tuner for vLLM to maximize throughput, minimize latency and memory"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 packages = [{include = "vllm_tuner", from = "src"}]
 license = {text = "MIT license"}
 authors = [
@@ -17,15 +17,25 @@ dependencies = [
     "typer>=0.9.0",
     "pyyaml>=6.0",
     "rich>=13.7.0",
-    "pynvml>=11.5.0",
+    "nvidia-ml-py>=13.580.0",
     "plotly>=5.18.0",
     "httpx>=0.26.0",
+    # The vLLM reproduction overlay installs httpx2 2.10 through OpenAI/MCP.
+    # Keep frozen core syncs from downgrading its required IDNA version.
+    "idna>=3.18",
     "datasets>=2.16.0",
-    "transformers>=4.37.0",
+    # vLLM 0.16 rejects the Transformers 5 API. Keep the core lock compatible
+    # so `uv sync --frozen` cannot undo the pinned GPU-runtime overlay.
+    "transformers>=4.56.0,<5",
     "tokenizers>=0.15.0",
     "jinja2>=3.1.0",
-    "numpy>=1.24.0",
+    # vLLM 0.16's numba/mistral-common stack is not compatible with NumPy 2.3+.
+    "numpy>=1.25,<2.3",
     "pandas>=2.1.0",
+    "pyarrow>=14.0.0",
+    # Kaleido 0.2 bundles its renderer, so static report images do not depend
+    # on an unrecorded system Chrome installation on the GPU host.
+    "kaleido==0.2.1",
 ]
 
 [project.optional-dependencies]
@@ -60,3 +70,18 @@ allow_zero_version = true
 major_on_zero = false
 version_variables = ["src/vllm_tuner/__init__.py:__version__"]
 changelog_file = "CHANGELOG.md"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: local HTTP/process integration tests",
+    "gpu: requires an NVIDIA GPU and a local model",
+    "performance: long-running benchmark experiments excluded from ordinary CI",
+]
