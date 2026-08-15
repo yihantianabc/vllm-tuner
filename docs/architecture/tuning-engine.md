@@ -1,59 +1,50 @@
-# Tuning Engine
+# SLO-aware tuning engine
 
-## How Optimization Works
+## Search space
 
-### 1. Study Creation
+The core searches only settings that change one-GPU vLLM serving:
 
-```python
-study = optuna.create_study(
-    direction="maximize",  # or "minimize"
-    sampler=TPESampler(),
-    pruner=MedianPruner()
-)
+```yaml
+search_space:
+  gpu_memory_utilization: [0.60, 0.95]
+  max_num_seqs: [8, 16, 32, 64, 128]
+  max_num_batched_tokens: [1024, 2048, 4096, 8192]
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
 ```
 
-### 2. Optimization Loop
+The old `batch_size` example was ineffective and is rejected. Parallel sizes are experiment
+constants for the one-card core. Duplicate ownership between search-space keys and `vllm_args`
+is rejected.
 
-For each trial:
-1. **Generate parameters** from search space
-2. **Launch vLLM server** with trial parameters
-3. **Run benchmarks** with workload
-4. **Collect metrics** (throughput, latency, memory)
-5. **Update Optuna** with trial result
-6. **Prune unpromising trials** if enabled
-
-### 3. Multi-Objective Optimization
+## Objective
 
 ```python
-directions = ["maximize", "minimize", "minimize"]  # throughput, latency, memory
+goodput_requests_per_second = requests_meeting_all_slos / measurement_seconds
 ```
 
-## Search Space
+There is one maximize direction. Throughput, tail latency, and memory do not receive arbitrary
+weights; they are evidence and/or constraints. Per-request SLO decisions are retained.
 
-All vLLM-tunable parameters:
-- `batch_size`: [1, 256]
-- `max_num_seqs`: [16, 512]
-- `gpu_memory_utilization`: [0.6, 0.99]
-- `max_num_batched_tokens`: [1024, 32768]
-- `tensor_parallel_size`: [1, 2, 4]
-- `pipeline_parallel_size`: [1, 2]
+## Method budget
 
-## Objective Functions
+For configured budget `N`, default, seeded random, and constrained TPE each collect `N` measured
+COMPLETE/INFEASIBLE outcomes. FAILED/PRUNED attempts remain recorded but do not masquerade as
+successful evaluations. The controller limits attempts so a broken environment cannot loop
+forever.
 
-### Throughput (Maximize)
+TPE receives explicit constraint values for infeasible trials. Manual best selection includes
+only COMPLETE trials with a real objective. Known failures cannot become best through a sentinel
+number.
 
-```python
-throughput_requests_per_sec = num_completed / duration_seconds
-```
+## Candidate validation
 
-### Latency (Minimize)
+The best default/random candidates and top TPE candidates are deduplicated by parameter set,
+repeated according to `repeat_count`, and then evaluated on held-out traffic when enabled. Formal
+configs use three repeats. Reports distinguish search, repeat, and held-out rows.
 
-```python
-avg_latency_ms = total_latency_ms / num_completed
-```
+## Reproducibility
 
-### Memory (Minimize)
-
-```python
-memory_utilization = avg_memory_mb / total_gpu_memory_mb
-```
+Seeded samplers, a persisted trace, fixed software/model identity, and an environment manifest make
+the suggestion/evaluation chain inspectable. Resume is opt-in and validates manifest/search-space
+compatibility before appending evidence.

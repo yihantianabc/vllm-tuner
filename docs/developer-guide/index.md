@@ -1,16 +1,10 @@
-# Developer Guide
+# SLOTune developer guide
 
-Welcome to the vLLM-Tuner developer guide.
+1. [Set up the environment](setup.md).
+2. [Run tests and quality checks](testing.md).
+3. Read the [architecture](../architecture/index.md) and [methodology](../METHODOLOGY.md).
+4. Follow [AGENTS.md](../../AGENTS.md) and [contributing guidance](contributing.md).
+5. Preserve fork attribution, raw evidence, failures, and negative results in every change.
 
-## Quick Start for Developers
-
-1. [Setup Development Environment](setup.md) - Initialize dev environment
-2. [Run Tests](testing.md) - Testing guide
-3. [Code Style Guide](../../AGENTS.md) - Coding standards
-4. [Contributing](contributing.md) - How to contribute
-
-## Key Resources
-
-- [AGENTS.md](../../AGENTS.md) - Coding standards for AI agents and humans
-- [User Guide](../user-guide/index.md) - Understanding the product
-- [Architecture](../architecture/) - System design
+GPU-dependent integration tests are separate from pure unit tests and deterministic scheduler
+experiments.

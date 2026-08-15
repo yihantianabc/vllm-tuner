@@ -1,71 +1,27 @@
-# HTML Reports
+# Static reports
 
-## Report Features
+The complete experiment runner produces static HTML, Markdown, JSON, and plot artifacts under the
+explicit experiment result root. Reports are views over retained raw evidence, not the sole source
+of truth.
 
-The HTML report provides an interactive dashboard with:
+Expected sections include:
 
-### Key Information
+- manifest and environment identity;
+- trial status counts and structured failures;
+- default/random/TPE goodput and constraint outcomes;
+- repeat and held-out tables;
+- offered, achieved, and goodput capacity views;
+- TTFT/TPOT/E2E distributions;
+- queue, KV, preemption, GPU utilization, and VRAM timelines when available;
+- scheduler calibration/held-out comparison;
+- limitations and negative/no-benefit conditions.
 
-Best Configuration Metrics
-- Throughput (requests/sec)
-- Average Latency (ms)
-- Total Trials run
-- Best Trial number
-
-### Parameters Table
-
-- vLLM parameters from best trial
-- Batch size, max_num_seqs, gpu_memory_utilization, etc.
-- Easy to copy-paste for reuse
-
-### Baseline vs Best Trial Comparison
-
-Shows comparison between:
-- Baseline: Default vLLM parameters
-- Best Trial: Optimized parameters found
-
-Metrics compared:
-- Throughput improvement (%)
-- Latency improvement (%)
-- P95/P99 latency improvement (%)
-- Memory delta (%)
-
-**Color coding:**
-- 🟢 Positive improvement: Better than baseline
-- 🔴 Negative change: Worse than baseline
-- ⚪ No change: Same as baseline
-
-### Interactive Charts
-
-#### Throughput Progression
-Shows throughput across trials with baseline reference line.
-
-#### Latency Distribution
-Shows average latency over trials.
-
-#### Pareto Front (Throughput vs. Locality)
-Trade-off visualization: higher throughput vs lower latency.
-
-#### GPU Memory Utilization
-Memory usage over trials, shows optimization impact.
-
-#### Combined View
-Multi-panel chart with all metrics in one dashboard.
-
-## Viewing Reports
+Legacy study reports can be generated with:
 
 ```bash
-# Generate report
-vllm-tuner report --study-name my_study --format html
-
-# View report (opens in browser)
-open reports/my_study/report.html
+vllm-tuner report --study-name STUDY --format html
 ```
 
-Report location: `reports/<study_name>/report.html`
-
-## Report Data
-
-Metrics are saved in:
-- `studies/<study_name>/configs/summary.json` - Summary and best trial
-- `studies/<study_name>/configs/trials.json` - All trial data
+For a SLOTune run, use the report paths printed by `vllm-tuner tune` and recorded in
+`summary.json`. Do not infer missing raw values from a chart, and do not treat simulator plots as
+runtime GPU measurements.

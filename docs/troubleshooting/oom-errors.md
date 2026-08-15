@@ -1,87 +1,47 @@
-# OOM Errors (Out of Memory)
+# Out-of-memory failures
 
-## Understanding OOM
+An OOM is a structured trial failure, not a poor numeric objective. The controller records the
+failure phase, log evidence, exit status, and final server state, stops the process group, and
+excludes the trial from best selection.
 
-OOM occurs when the GPU runs out of memory while running vLLM.
+## Common pressure sources
 
-## Causes
+- model weights and runtime compilation/CUDA graph memory;
+- high `gpu_memory_utilization` KV allocation;
+- many admitted sequences via `max_num_seqs`;
+- long contexts or `max-model-len`;
+- large `max_num_batched_tokens` prefill work;
+- other processes using the GPU.
 
-1. **Model too large** - Model requires more VRAM than available
-2. **High batch size** - Processing too many concurrent requests
-3. **Large sequence length** - max-model-len too large
-4 - **High memory utilization** - gpu_memory_utilization too high
-5. **Memory fragmentation** - Repeated allocations/deallocations
+There is no vLLM server `batch_size` knob in the SLOTune search space.
 
-## Immediate Solutions
-
-### Reduce Memory Utilization
-
-```yaml
-search_space:
-  gpu_memory_utilization: [0.5, 0.85]  # Lower upper bound
-```
-
-### Reduce Batch Size
-
-```yaml
-search_space:
-  batch_size: [1, 64]  # Smaller batches
-  max_num_seqs: [8, 64]
-```
-
-### Reduce Sequence Length
-
-```yaml
-vllm_args:
-  max-model-len: 512  # Shorter sequences
-```
-
-## Prevention
-
-### Set Realistic Constraints
+## Conservative search
 
 ```yaml
 constraints:
-  max_memory_utilization: 0.90
-```
-
-### Start Conservative
-
-```yaml
+  max_peak_vram_mb: 30000
+  max_memory_utilization: 0.92
+  require_no_oom: true
 search_space:
-  batch_size: [1, 32]    # Start small
-  max_num_seqs: [4, 32]
-  gpu_memory_utilization: [0.6, 0.80]
+  gpu_memory_utilization: [0.60, 0.85]
+  max_num_seqs: [8, 16, 32]
+  max_num_batched_tokens: [1024, 2048, 4096]
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+vllm_args:
+  max-model-len: 4096
 ```
 
-## Monitoring
+Lower one dimension at a time when diagnosing. Keep the workload trace fixed so the change remains
+interpretable.
 
-Check GPU during tuning:
+## Confirm classification and cleanup
 
-```bash
-# In another terminal:
-watch -n 1 nvidia-smi
-```
+1. Inspect `server.log` for CUDA allocation evidence.
+2. Check the structured failure type/phase in `status.json` and `summary.json`.
+3. Confirm the server process group exited and GPU memory returned before the next trial.
+4. Distinguish OOM from invalid arguments, timeouts, request errors, or unrelated runtime failures.
+5. Keep the failed trial in the aggregate report.
 
-Look for:
-- Memory usage approaching limit
-- High GPU utilization
-- Power spikes
-
-## System Configuration
-
- Ubuntu/Debian settings
-
-Check swap:
-```bash
-swapon --show
-free -h
-```
-
-Increase swap if needed:
-```bash
-# Create 16GB swap
-sudo dd if=/dev/zero bs=1M count=16384 of=/swapfile
-sudo chmod 600 /swapfile
-sudo swapon /swapfile
-```
+Peak VRAM comes from the sampled NVML time series. If NVML was unavailable, the report must say so
+instead of claiming a zero peak.

@@ -1,175 +1,74 @@
 # Installation
 
-This guide covers installing vLLM-Tuner and its dependencies.
-
-## System Requirements
-
-### Minimum Requirements
-
-- **Python**: 3.10 or higher
-- **RAM**: At least 8GB available
-- **Disk**: ~2GB free space for dependencies
-- **GPU**: NVIDIA GPU with CUDA support (recommended for running vLLM)
-
-### Recommended for Development
-
-- **Python**: 3.10, 3.11, or 3.12
-- **RAM**: 16GB or more
-- **GPU**: Recent NVIDIA GPU with at least 4GB VRAM
-- **Disk**: 10GB or more free space
-
-## Installation Steps
-
-### Step 1: Clone or Download
+## Development environment
 
 ```bash
-# If you want to contribute, clone the repository
-git clone https://github.com/your-org/vllm-tuner.git
-cd vllm-tuner
-
-# If using the repository locally:
-cd /path/to/vllm-tuner
-```
-
-### Step 2: Install with Development Dependencies
-
-```bash
-# Create and activate uv environment
-uv venv --seed --python 3.10
+cd /root/autodl-tmp/vllm-tuner
+uv venv --seed --python 3.12
 source .venv/bin/activate
-
-# Install with all dev tools
-pip install -e ".[dev]"
-
-# Alternatively, install without dev tools
-pip install -e .
+uv pip install -e ".[dev]"
 ```
 
-The `[dev]` extra includes:
-- **Testing**: pytest, pytest-asyncio, pytest-cov
-- **Code Quality**: black, ruff, mypy
-- **Type Stubs**: types-PyYAML
-
-### Step 3: Install vLLM
-
-vLLM is required to run tuning studies:
+Install vLLM only when running GPU integration/smoke/formal experiments:
 
 ```bash
 uv pip install vllm --torch-backend=auto
 ```
 
-For specific CUDA versions (optional):
+Verify the package and CLI:
 
 ```bash
-# CUDA 12.1
-uv pip install vllm --extra-index-url https://download.pytorch.org/whl/cu121
-
-# CUDA 12.4
-uv pip install vllm --extra-index-url https://download.pydantic.org/whl/cu124
-```
-
-### Step 4: Verify Installation
-
-```bash
-python -c "
-from src.config.models import TuningConfig
-from src.tuner.optimizer import VLLMOptimizer
-print('✓ vLLM-Tuner installation successful')
-"
-
-python -c "
-import vllm
-print(f'✓ vLLM {vllm.__version__} installed')
-"
-```
-
-## Dependency Installation Issues
-
-### Issue: No module named 'pynvml'
-
-```bash
-# Ubuntu/Debian
-uv pip install pynvml
-
-# Then reinstall
-uv pip install git+https://github.com/jranaraki/vllm-tuner
-```
-
-### Issue: vLLM installation fails
-
-```bash
-# Check CUDA compatibility
-nvidia-smi
-nvcc --version
-
-# Install PyTorch with correct CUDA version first
-uv pip install torch
-
-# Then install vLLM
-uv pip install vllm --torch-backend=auto
-```
-
-## Verification
-
-### Check Dependencies
-
-```bash
-python3 -c "
-import sys
-pkgs = ['pydantic', 'optuna', 'yaml', 'httpx', 'plotly', 'jinja2']
-for pkg in pkgs:
-    try:
-        __import__(pkg)
-        print(f'✓ {pkg}')
-    except ImportError as e:
-        print(f'✗ {pkg}: {e}')
-"
-```
-
-### Run Health Check
-
-```bash
-# Check if CLI is available
+python -c "from vllm_tuner.config.models import TuningConfig; print(TuningConfig().model)"
 vllm-tuner --help
-
-# Run test import
-python3 -c "
-from src.cli.main import app
-print('✓ CLI import successful')
-"
+python scripts/run_scheduler_ablation.py --help
 ```
 
-## Post-Installation Steps
+Unit tests and the deterministic scheduler demo do not require a GPU. Runtime integration requires
+a CUDA-compatible NVIDIA GPU, working driver/NVML, vLLM, and enough disk for model and compilation
+caches.
 
-### 1. View Example Configurations
+## Data-disk environment
+
+The repository includes a machine-specific setup script for `/root/autodl-tmp`:
 
 ```bash
-ls -la config/ examples/
-cat config/default.yaml
+./scripts/setup_data_disk_reproduction.sh
 ```
 
-### 2. Read AGENTS.md
-
-See [AGENTS.md](../AGENTS.md) for:
-- Build/lint/test commands
-- Code style guidelines
-- Development workflow
-
-### 3. Test Installation
+It places the environment, Hugging Face, PyTorch, Triton, CUDA, vLLM, uv/pip, and temporary caches
+on the data disk. Review the script before using it on another host. Because a setup subprocess
+cannot export variables into its caller, use the command wrapper for formal runs:
 
 ```bash
-# List studies
-vllm-tuner list-studies
-
-# Should show empty list or existing studies
+./scripts/run_reproduction_command.sh tune --config config/formal_3b_chat.yaml \
+  --study-name qwen25_3b_chat_001 --results-root /root/autodl-tmp/slotune-results
 ```
 
-## Uninstall
+## Verification levels
+
+CPU-only scheduler demo:
 
 ```bash
-pip uninstall vllm-tuner
-
-# Remove venv (if used)
-deactivate
-rm -rf .venv
+./scripts/run_demo.sh /root/autodl-tmp/slotune-demo/scheduler
 ```
+
+Local Qwen3-0.6B GPU correctness smoke:
+
+```bash
+./scripts/run_data_disk_reproduction.sh slotune_smoke_001
+```
+
+The smoke is not a benchmark. Formal runs require the 3B model path in the selected validated
+config and should use a unique explicit results root.
+
+## Common installation checks
+
+```bash
+nvidia-smi
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+python -c "import vllm; print(vllm.__version__)"
+pytest -q tests/unit
+```
+
+Match PyTorch/CUDA/vLLM using their official compatibility guidance for the host rather than
+copying a wheel URL from an unrelated environment.

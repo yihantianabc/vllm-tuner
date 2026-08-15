@@ -1,191 +1,49 @@
-# User Guide
+# SLOTune user guide
 
-This guide helps you get started with tuning vLLM models for optimal performance.
+SLOTune finds the highest **SLO goodput** among effective vLLM single-GPU settings while retaining
+latency, memory, queue, KV-cache, preemption, and failure evidence.
 
-## What is vLLM-Tuner?
+## First run
 
-vLLM-Tuner is a tool that automatically optimizes vLLM model configurations for:
-- **Maximizing throughput** - Process more requests per second
-- **Minimizing latency** - Reduce time-to-first-token and generation time
-- **Balancing memory** - Keep GPU memory usage efficient
-
-Using Optuna's Bayesian optimization, it automatically searches the parameter space to find the best configuration for your specific workload and hardware.
-
-## Quick Start
-
-### 1. Install
-
-See [Installation](installation.md) for detailed instructions.
-
-### 2. Create a Configuration
-
-```yaml
-model: "Qwen/Qwen1.5-0.5B-Chat-AWQ"
-
-gpu:
-  device_ids: [0]
-  count: 1
-
-objectives:
-  throughput: 60
-  latency: 30
-  memory: 10
-
-workload:
-  dataset_name: "tatsu-lab/alpaca"
-  sample_size: 100
-  max_tokens: 256
-
-search_space:
-  batch_size: [1, 256]
-  max_num_seqs: [16, 256]
-  gpu_memory_utilization: [0.6, 0.99]
-
-study:
-  min_trials: 25
-  timeout_minutes: 1440
-```
-
-Save this as `my_config.yaml`.
-
-### 3. Run a Tuning Study
+For a CPU-only deterministic scheduling demo:
 
 ```bash
-vllm-tuner tune --config my_config.yaml --study-name my_first_study
+./scripts/run_demo.sh /root/autodl-tmp/slotune-demo/scheduler
 ```
 
-Open the generated HTML report to see the optimization results.
-
-## Core Concepts
-
-### Configuration Files
-
-YAML files define your tuning objectives, constraints, and search spaces. See [Configuration](configuration.md).
-
-### Objectives and Constraints
-
-- **Objectives**: What you want to optimize (throughput, latency, memory)
-- **Constraints**: Limits that must not be exceeded (max latency, memory cap)
-
-### Workload Definition
-
-Your workload describes the typical requests your model will handle:
-- Dataset for prompt generation
-- Number of concurrent requests
-- Request token lengths
-
-### Search Space
-
-The parameter ranges that vLLM-Tuner will explore:
-- `batch_size`: How many tokens to process together
-- `max_num_seqs`: Maximum concurrent sequences per batch
-- `gpu_memory_utilization`: Fraction of GPU memory to use
-- `tensor_parallel_size`: Parallelizing the computation of transformer layers across multiple GPUs 
-- `pipeline_parallel_size`: Number of model segments distributed across different GPUs
-
-### Baseline Generation
-
-Before tuning, vLLM-Tuner can generate baseline metrics using default vLLM settings. This provides a reference point for comparison.
-
-### Study and Trials
-
-- **Study**: A complete optimization run
-- **Trial**: One iteration testing a specific configuration
-- Optuna automatically learns from trials to improve over time
-
-## Common Workflows
-
-### Workflow 1: Maximize Throughput
-
-```yaml
-objectives:
-  throughput: 100
-  latency: 0
-  memory: 0
-```
-
-Best for: Batch processing, high-volume inference.
-
-### Workflow 2: Minimize Latency
-
-```yaml
-objectives:
-  throughput: 0
-  latency: 100
-  memory: 0
-
-constraints:
-  max_latency_ms: 500
-```
-
-Best for: Real-time chatbots, interactive applications.
-
-### Workflow 3: Balanced Performance
-
-```yaml
-objectives:
-  throughput: 50
-  latency: 40
-  memory: 10
-```
-
-Best for: General-purpose deployment with multiple priorities.
-
-## Output Artifacts
-
-### Study Data
-
-Stored in `studies/<study_name>/`:
-- `optuna.db`: Optuna study database
-- `best_params.json`: Best found configuration
-- `study_summary.json`: Run statistics
-
-### HTML Reports
-
-Interactive reports (`<study_name>_report.html`) with:
-- Optimization progress plots
-- Trial comparison table
-- Baseline vs. optimized metrics
-- Parameter importance analysis
-
-### Exported Configuration
-
-Export the best configuration:
+For the local Qwen3-0.6B GPU correctness smoke:
 
 ```bash
-vllm-tuner export --study-name my Study --format yaml > best_config.yaml
+./scripts/run_data_disk_reproduction.sh slotune_smoke_001
 ```
 
-## Best Practices
+The second command is not a benchmark. Formal templates use the 3B model:
 
-### Start Small
+```bash
+./scripts/run_reproduction_command.sh tune \
+  --config config/formal_3b_chat.yaml \
+  --study-name qwen25_3b_chat_001 \
+  --results-root /root/autodl-tmp/slotune-results
+```
 
-- Use `sample_size: 100` for initial experiments
-- Set `min_trials: 25` for quick feedback
-- Use small models (e.g., Qwen1.5-0.5B) for testing
+## Core concepts
 
-### Choose Realistic Constraints
+- A persisted request trace and checksum are reused by default/random/TPE.
+- SLO goodput is the only objective; failures and resource/SLO violations are constraints.
+- Every search method receives the same measured evaluation budget.
+- Warmup data are excluded; request results and telemetry stay raw and namespaced.
+- Top candidates are repeated and rerun on a held-out trace.
+- Scheduler simulations compare fixed token budgets with adaptive behavior and retain regressions.
 
-- Set `max_memory_utilization` based on your actual GPU memory
-- Use realistic `max_tokens` values based on your workload
-- Consider your GPU model when setting constraints
+## Guides
 
-### Monitor GPU
+- [Configuration](configuration.md)
+- [CLI](cli-commands.md)
+- [Metrics](reports/metrics-explained.md)
+- [Comparisons and negative results](reports/baseline-comparison.md)
+- [Custom fixed traces](examples/custom-workload.md)
+- [Formal protocol](../FORMAL_EXPERIMENTS.md)
+- [Troubleshooting](../troubleshooting/common-issues.md)
 
-- Ensure no other processes are using the target GPU
-- Monitor GPU memory during study with `nvidia-smi dmon`
-- Use `gpu_memory_utilization: 0.8` initially, not 0.99
-
-### Save Your Work
-
-Study data persists in `studies/<study_name>/optuna.db`. You can:
-
-- Resume interrupted studies
-- Compare multiple studies
-- Export best configurations
-
-## Getting Help
-
-- [Troubleshooting](../troubleshooting/common-issues.md) - Common problems
-- [Examples](examples/) - Working examples
-- [Developer Guide](../developer-guide/) - For advanced users
+The core is intentionally one GPU. Multi-GPU, TP, and PP search examples from upstream do not
+apply to SLOTune.

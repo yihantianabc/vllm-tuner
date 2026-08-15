@@ -1,34 +1,55 @@
-# Architecture
+# SLOTune architecture
 
-## Overview
+```text
+ExperimentSpec
+  model / hardware / workload / SLO / search space / seed
+                              │
+                              ▼
+                       Experiment Runner
+        fixed search trace + separately generated held-out trace
+                              │
+                              ▼
+                       Trial Controller
+ START → READY → WARMUP → MEASURE → COLLECT → STOP → terminal status
+    │                    │                       │
+    ▼                    ▼                       ▼
+ManagedVLLMServer   benchmark adapter      TelemetrySession
+process group       official or SSE        Prometheus + NVML
+    └────────────────────┬───────────────────────┘
+                         ▼
+                 objective + constraints
+                         ▼
+        equal-budget default / random / constrained TPE
+                         ▼
+             repeats + held-out + artifact/report
 
-vLLM-Tuner consists of several coordinated components:
+fixed traces ──► deterministic token-budget simulator ──► ablation
+```
 
-![Components](components.png)
+## Packages
 
-## Components
+- `experiment`: immutable manifest, artifact store, high-level orchestration;
+- `workloads`: deterministic profiles, arrival generation, JSONL trace/checksum;
+- `benchmarks`: request/result models, official adapter, SSE parser/client, metric reducer;
+- `runtime`: managed server, state machine, failure classification, trial controller;
+- `profiling`: Prometheus parsing, NVML session, aligned time series, telemetry lifecycle;
+- `tuning`: SLO-goodput objective, effective search space, equal-budget controller;
+- `scheduling`: fixed/adaptive budget policies, fair admission, deterministic simulator;
+- `reporting`: plots and static HTML/Markdown/JSON reports;
+- `cli`: user-facing experiment entry point.
 
-### CLI Layer (src/cli/)
-- `main.py` - Typer CLI interface
-- Commands: tune, report, export, list-studies
+Legacy upstream packages remain for compatibility, but the components above form the SLOTune
+evidence path.
 
-### Configuration (src/config/)
-- `models.py` - Pydantic validation models
-- `validation.py` - YAML parsing and validation
+## Ownership boundaries
 
-### Tuning Engine (src/tuner/)
-- `study_manager.py` - Study orchestration
-- `optimizer.py` - Optuna optimization logic
+- Server parameters belong to the tuner.
+- Arrival rate, burstiness, concurrency, and token distribution belong to the workload.
+- Model/revision, trace, seed, backend, SLO, telemetry interval, and environment are experiment
+  constants.
+- Runtime scheduler behavior and deterministic simulator behavior are separate evidence types.
 
-### Integration (src/)
-- `vllm/launcher.py` - vLLM server launch
-- `vllm/telemetry.py` - vLLM log parsing
-- `baseline/runner.py` - Baseline generation
+This separation prevents the tuner from changing the workload it is being scored against or from
+presenting a simulator result as a vLLM measurement.
 
-### Profiling (src/profiling/)
-- `gpu_collector.py` - NVML GPU monitoring
-- `vllm_metrics.py` - vLLM performance metrics
-
-### Reporting (src/reporting/)
-- `html.py` - HTML report generation
-- `export.py` - Configuration export
+See [Methodology](../METHODOLOGY.md) for correctness and artifact acceptance.

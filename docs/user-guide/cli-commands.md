@@ -1,60 +1,65 @@
-# CLI Commands
+# CLI commands
 
-## Available Commands
+Use `vllm-tuner --help` and `vllm-tuner COMMAND --help` as the authoritative option list.
 
-### `vllm-tuner tune`
-
-Run a tuning study.
+## `tune`
 
 ```bash
-vllm-tuner tune --config <config.yaml> --study-name <name>
+vllm-tuner tune \
+  --config config/formal_3b_chat.yaml \
+  --study-name qwen25_3b_chat_001 \
+  --results-root /root/autodl-tmp/slotune-results
 ```
 
-#### Options
+Important options:
 
-| Option | Short | Default | Description |
-|--------|-------|---------|-------------|
-| `--config` | `-c` | config/default.yaml | YAML config file |
-| `--study-name` | `-n` | Required | Study name |
-| `--model` | `-m` | From config | Override model name |
-| `--gpu-count` | `-c` | From config | Override GPU count |
-| `--no-progress` | | False | Disable progress bar |
+| Option | Meaning |
+|---|---|
+| `--config PATH` | validated YAML; defaults to `config/default.yaml` |
+| `--study-name NAME` | experiment ID; use a unique name |
+| `--model PATH` | optional model override |
+| `--gpu-count 1` | core supports exactly one GPU |
+| `--results-root PATH` | explicit immutable experiment root |
+| `--trace PATH` | fixed search `WorkloadTrace` JSONL |
+| `--holdout-trace PATH` | fixed unseen validation JSONL |
+| `--with-progress` | acknowledge per-trial status progress |
 
-#### Examples
+`--baseline/--no-baseline` is a deprecated compatibility option. The equal-budget `default`
+method is the comparison baseline.
+
+## Scheduler ablation
 
 ```bash
-# Basic tuning
-vllm-tuner tune --config config/default.yaml --study-name my_study
-
-# Override model
-vllm-tuner tune --config config/default.yaml --study-name test --model gpt2
-
-# Multi-GPU with progress disabled
-vllm-tuner tune --config docs/user-guide/examples/multi_gpu_tune.yaml --study-name llama --no-progress
+python scripts/run_scheduler_ablation.py \
+  --output-dir /root/autodl-tmp/slotune-scheduler/mixed
 ```
 
-### `vllm-tuner report`
+The standalone script needs no GPU. It supports built-in deterministic traces, a combined JSONL
+with `split: calibration|held_out`, or separate trace files. Its default fixed budgets are
+512/1024/2048/4096/8192, and it writes JSON plus Markdown including negative conditions.
 
-Generate reports from completed study.
+## `report`
 
 ```bash
-vllm-tuner report --study-name <name> --format html
+vllm-tuner report --study-name STUDY --format html
 ```
 
-Formats: html, json, markdown
+Supported legacy report formats are HTML, JSON, and Markdown. The complete SLOTune experiment
+runner also writes static reports directly inside the explicit results root.
 
-### `vllm-tuner export`
-
-Export best configuration.
+## `export`
 
 ```bash
-vllm-tuner export --study-name <name> --format yaml
+vllm-tuner export --study-name STUDY --format yaml --output /explicit/best.yaml
 ```
 
-### `vllm-tuner list-studies`
+Only a successful selectable candidate can be exported.
 
-List all available studies.
+## `list-studies`
 
 ```bash
 vllm-tuner list-studies
 ```
+
+This lists studies in the configured legacy study directory; explicit SLOTune experiment roots
+remain the primary artifact location.

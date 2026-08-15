@@ -1,55 +1,28 @@
-# Developer Setup
-
-## Prerequisites
-
-- Python 3.10 or higher
-- Git (optional, for contributing)
-- NVIDIA GPU with CUDA (for running tests, optional for development)
-
-## Installation
+# Developer setup
 
 ```bash
-# Clone repository
-git clone https://github.com/your-org/vllm-tuner.git
-cd vllm-tuner
-
-# Install with dev dependencies
+cd /root/autodl-tmp/vllm-tuner
+uv venv --seed --python 3.12
+source .venv/bin/activate
 uv pip install -e ".[dev]"
+```
 
-# Install vLLM (for integration tests)
+Install vLLM only for GPU integration work:
+
+```bash
 uv pip install vllm --torch-backend=auto
 ```
 
-## Verify Setup
+Verify:
 
 ```bash
-# Test imports
-python -c "from src.config.models import TuningConfig; from src.tuner.optimizer import VLLMOptimizer"
-
-# Run unit tests
-pytest tests/unit/ -v
-
-# Check code quality
-ruff check src/ tests/
-black --check src/ tests/
-mypy src/
+python -c "from vllm_tuner.config.models import TuningConfig; print(TuningConfig())"
+pytest -q tests/unit
+ruff check src tests scripts/run_scheduler_ablation.py
+black --check src tests scripts/run_scheduler_ablation.py
+mypy src
 ```
 
-## IDE Setup
-
-### VS Code
-
-Install extensions:
-- Python
-- Pylance
-- Black Formatter
-- Ruff
-- Pyright
-
-### PyCharm
-
-Configure:
-- Python interpreter to `.venv/bin/python`
-- Enable Black formatting
-- Enable Ruff linting
-- Configure test runner
+The deterministic scheduler tests and demo are pure Python. Runtime tests require an NVIDIA GPU,
+NVML, a compatible vLLM/PyTorch/CUDA stack, and a local model. Keep large caches and generated
+artifacts outside the repository, preferably under `/root/autodl-tmp` on the reference host.

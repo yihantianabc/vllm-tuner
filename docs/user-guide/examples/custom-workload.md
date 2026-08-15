@@ -1,234 +1,81 @@
-# Custom Workload
+# Custom fixed workload traces
 
-This guide explains how to use your own dataset with vLLM-Tuner.
-
-## Quick Start
-
-### Option 1: Hugging Face Dataset
-
-Use any dataset from Hugging Face Hub:
-
-```yaml
-workload:
-  dataset_name: "your-dataset-name"
-  sample_size: 100
-  concurrent_requests: 10
-```
-
-### Option 2: Custom YAML Format
-
-Create custom workload file:
-
-```yaml
-dataset_path: "data/my_prompts.jsonl"
-
-prompts:
-  - "What is the capital of France?"
-  - "Explain quantum computing in simple terms."
-  - "Write a poem about AI."
-  - "Translate hello to Spanish."
-  - "What is machine learning?"
-
-workload:
-  sample_size: 5
-  concurrent_requests: 2
-  max_tokens: 128
-```
-
-## Custom Workload Format
-
-### JSONL Format
-
-```json
-[
-  {
-    "instruction": "Your question here",
-    "input": "Optional context",
-    "output": "Expected output (optional)"
-  }
-]
-```
-
-### Custom Plain Text File
-
-```
-prompt_1
-prompt_2
-prompt_3
-...
-```
-
-## Loading from Local Dataset
-
-```yaml
-# Local directory
-dataset_dir: "data/my_prompts/"
-
-# workloadDirectory options
-dataset_dir: "data/my_prompts/"  # Plain text prompts
-# dataset_file: "data/prompts.jsonl"  # JSONL file
-```
-
-## Prompt Length
-
-### Average Length
-
-Configure for typical input sizes:
-
-```yaml
-workload:
-  prompt_length_distribution: "auto"  # Auto (default)
-  # OR
-  prompt_length_distribution: "weighted"  # Weighted distribution
-  # OR
-  prompt_length_distribution: "uniform"  # Uniform distribution
-```
-
-### Custom Length Ranges
-
-For specific requirements:
-
-```yaml
-workload:
-  min_prompt_length: 50
-  max_prompt_length: 500
-```
-
-### Prompt Template
-
-Combine instruction and input:
-
-```yaml
-workload:
-  prompt_template: "{instruction}\\n\\n{input}"
-
-dataset_path: "data/my_prompts.jsonl"
-```
-
-## Examples
-
-### Example 1: Code Generation Dataset
-
-QueryList or custom dataset for code tasks.
-
-### Example 2: Comparison/Dataset
-
-```yaml
-dataset_path: "data/comparisons.jsonl"
-```
-
-Each item:
-```json
-{
-  "instruction": "Compare Python and JavaScript.",
-  "input": "What are the main differences?",
-  "output": null
-}
-```
-
-### Example 3: Conversation Dataset
-
-Format with conversational turns:
-
-```yaml
-dataset_dir: "data/conversations/"
-```
-
-Files:
-- conversation_1.json
-- conversation_2.json
-
-Each file contains:
-```json
-{
-  "messages": [
-    {"role": "user", "content": "Hello!"},
-    {"role": "assistant", "content": "Hi! How can I help?"}
-  ]
-}
-```
-
-## Benchmarking Options
-
-Number of requests:
-
-```yaml
-workload:
-  sample_size: 50       # Number of prompts
-```
-
-Concurrent requests:
-
-```yaml
-workload:
-  concurrent_requests: 10   # Simulated concurrent clients
-```
-
-Warmup requests:
-
-```yaml
-workload:
-  warmup_requests: 5     # Warmup trials to stabilize
-```
-
-Max output tokens:
-
-```yaml
-workload:
-  max_tokens: 256        # Max tokens per response
-```
-
-## Dataset Prerequisites
-
-### File Format Requirements
-
-- Must be valid JSON or JSONL format
-- Must have at least `sample_size` valid items
-- Each item must have required field (instruction/input)
-
-### Dataset Size
-
-- Minimum: 10 prompts
-- Recommended: 100-1000 prompts
-- Large datasets increase run time but improve reliability
-
-### Data Quality
-
-- Prompts should be meaningful and realistic
-- Avoid extremely long prompts unless testing edge cases
-- Include variety in prompt lengths
-
-## Troubleshooting
-
-### Dataset Not Found
+For comparable search trials, prefer an immutable `WorkloadTrace` JSONL over regenerating traffic
+inside each trial. Supply one search trace and a different held-out trace:
 
 ```bash
-# Check file exists
-ls -la data/prompts.jsonl
-
-# Check file format
-cat data/prompts.jsonl | head -5
+vllm-tuner tune \
+  --config config/formal_3b_chat.yaml \
+  --study-name custom_trace_001 \
+  --trace /root/autodl-tmp/traces/search.jsonl \
+  --holdout-trace /root/autodl-tmp/traces/held-out.jsonl \
+  --results-root /root/autodl-tmp/slotune-results
 ```
 
-### Dataset Loading Errors
+## `WorkloadTrace` JSONL schema
+
+Each line is one request, ordered by `scheduled_offset_seconds`:
+
+```json
+{"request_id":"chat-000001","scheduled_offset_seconds":0.0,"prompt":"Explain KV cache pressure.","input_tokens":7,"output_tokens":128,"profile":"chat","shared_prefix_id":null}
+```
+
+Required fields:
+
+- `request_id`: unique stable string;
+- `scheduled_offset_seconds`: non-negative offset, monotonically ordered;
+- `prompt`: exact text sent to the server;
+- `input_tokens`: tokenizer-derived positive count;
+- `output_tokens`: positive requested output count;
+- `profile`: descriptive workload name;
+- `shared_prefix_id`: optional identifier for prefix-reuse analysis.
+
+The CLI records the trace checksum in the experiment manifest. Search methods and repeats use the
+same file. Held-out data must not have influenced parameter selection.
+
+## Generated profiles
+
+Without CLI trace paths, these `workload.name` values are deterministic for a fixed seed:
+
+| Profile | Approximate input | Approximate output | Purpose |
+|---|---:|---:|---|
+| `chat` | 192–320 | 96–160 | decode concurrency |
+| `rag` | 1792–2304 | 96–160 | long prefill and shared prefix |
+| `mixed` | 256–4096 | 64–256 | head-of-line blocking |
+| `codegen` | 384–640 | 384–640 | decode-heavy TPOT |
+
+`request_rate` and `burstiness` control seeded open-loop interarrivals. Use a positive request rate
+for capacity experiments. The held-out generator uses a different deterministic seed.
+
+## Local prompt datasets
+
+When `workload.name` is not a named profile, `dataset_name` can point to JSON or JSONL containing
+objects with `instruction` or `prompt` and optional `input`:
+
+```json
+{"instruction":"Summarize the context.","input":"Context text..."}
+```
+
+This prompt-loader path tokenizes the actual text before creating the trace. It is distinct from
+the exact `WorkloadTrace` schema above.
+
+## Scheduler-ablation JSONL
+
+The standalone CPU simulator uses a smaller schema documented by its help:
 
 ```bash
-# Validate JSONL structure
-python3 << 'PYTHON'
-import json
-with open("data/prompts.jsonl") as f:
-    for line in f:
-        item = json.loads(line)
-        print(item.keys())
-PYTHON
+python scripts/run_scheduler_ablation.py --help
 ```
 
-### Insufficient Samples
+A combined file adds `"split":"calibration"` or `"split":"held_out"` to each line and uses
+`arrival_time`, `prompt_tokens`, and `output_tokens`. Do not confuse it with the runtime
+`WorkloadTrace` format.
 
-Error: `Not enough prompts in dataset: found X, need Y`
+## Validation checklist
 
-**Solution:** Reduce `sample_size` in config
-```yaml
-workload:
-  sample_size: 50  # Reduce if dataset is small
-```
+- IDs are unique within each trace.
+- Offsets are sorted and non-negative.
+- Token counts were produced by the recorded tokenizer.
+- Search and holdout traces have separate checksums.
+- The same fixed files are reused for every method and repeat.
+- Raw request results retain errors and timeouts rather than dropping rows.

@@ -1,58 +1,48 @@
-# vLLM Auto-Tuner Configuration
-# Default tuning configuration with preset weights
-
-# Model to tune
-model: "Qwen/Qwen1.5-0.5B-Chat-AWQ"
-
-# GPU configuration
+# Valid SLOTune single-GPU example. Prefer config/formal_3b_{chat,rag}.yaml for formal runs.
+model: "/root/autodl-tmp/models/Qwen2.5-3B-Instruct"
 gpu:
   device_ids: [0]
   count: 1
-
-# Multi-objective optimization weights (must sum to 100)
-objectives:
-  throughput: 60
-  latency: 30
-  memory: 10
-
-# Tuning constraints
+slo:
+  ttft_ms: 1000
+  tpot_ms: 100
+  e2e_ms: 8000
 constraints:
-  max_latency_ms: null
-  max_memory_utilization: null
-  throughput_min: null
-
-# Custom search space overrides (null = use default values)
+  max_error_rate: 0.01
+  max_peak_vram_mb: 31000
+  require_no_oom: true
+  require_server_alive: true
 search_space:
-  batch_size: null
-  max_num_batched_tokens: null
-  max_num_seqs: null
-  gpu_memory_utilization: null
-  tensor_parallel_size: null
-  pipeline_parallel_size: null
-
-# Benchmark workload configuration
+  gpu_memory_utilization: [0.60, 0.95]
+  max_num_seqs: [8, 16, 32, 64, 128]
+  max_num_batched_tokens: [1024, 2048, 4096, 8192]
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
 workload:
-  name: "alpaca"
-  dataset_name: "tatsu-lab/alpaca"
+  name: "mixed"
+  dataset_name: "synthetic:mixed"
   sample_size: 100
-  prompt_length_distribution: "auto"
-  warmup_requests: 5
-  concurrent_requests: 10
-  max_tokens: 256
-
-# Baseline generation (before optimization)
-baseline:
+  warmup_requests: 10
+  max_concurrency: 32
+  request_rate: 8
+  burstiness: 1.0
+  max_tokens: 128
+  seed: 2026
+  benchmark_backend: "official"
+telemetry:
   enabled: true
-
-# Optuna study settings
+  interval_ms: 200
+  collect_nvml: true
 study:
-  min_trials: 25
-  timeout_minutes: 1440
-  storage_backend: "sqlite:///studies/optuna.db"
-  prune_enabled: true
-  n_startup_trials: 2
-
-# Additional arguments to pass to vLLM server
+  trial_budget: 8
+  timeout_minutes: 240
+  seed: 2026
+  methods: ["default", "random", "tpe"]
+  repeat_count: 3
+  top_candidates: 3
+  holdout_enabled: true
+  resume: false
+baseline:
+  enabled: false
 vllm_args:
-  max-model-len: 1024
-  gpu-memory-utilization: 0.6
+  max-model-len: 8192
