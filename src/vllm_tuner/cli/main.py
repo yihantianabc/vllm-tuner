@@ -294,7 +294,7 @@ def _read_aggregate_tables(experiment_dir: Path) -> dict[str, dict[str, Any]]:
     for label, filename in AGGREGATE_TABLES.items():
         path = experiment_dir / "aggregate" / filename
         record: dict[str, Any] = {
-            "path": str(path.relative_to(experiment_dir)),
+            "path": path.relative_to(experiment_dir).as_posix(),
             "available": False,
             "row_count": None,
             "records": [],

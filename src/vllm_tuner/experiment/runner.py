@@ -1177,7 +1177,7 @@ class SLOTuneExperimentRunner:
                 )
         manifest.report_artifacts = {
             "files": {
-                name: str(path.relative_to(self.artifacts.root))
+                name: path.relative_to(self.artifacts.root).as_posix()
                 for name, path in report_paths.items()
             },
             "plots": plot_manifest["plots"],

@@ -707,7 +707,7 @@ class ArtifactStore:
             raise ValueError("Cannot compact scheduler ablation without its raw artifact")
         compact: dict[str, Any] = {
             "schema_version": 1,
-            "raw_artifact": str(raw_path.relative_to(self.root)),
+            "raw_artifact": raw_path.relative_to(self.root).as_posix(),
             "raw_size_bytes": raw_path.stat().st_size,
             "raw_sha256": sha256_file(raw_path),
             "has_negative_result": bool(scheduler.get("has_negative_result", False)),
@@ -1051,7 +1051,7 @@ class ArtifactStore:
             anchor = self.trials_dir / trial_id / ARTIFACT_INTEGRITY_FILE
             anchor_record = {
                 "trial_id": trial_id,
-                "path": str(anchor.relative_to(self.root)),
+                "path": anchor.relative_to(self.root).as_posix(),
                 "size_bytes": anchor.stat().st_size,
                 "sha256": sha256_file(anchor),
             }
