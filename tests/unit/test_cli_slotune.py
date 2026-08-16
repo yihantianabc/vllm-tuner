@@ -558,7 +558,7 @@ def test_tune_help_exposes_manifest_validated_resume() -> None:
     result = runner.invoke(app, ["tune", "--help"])
 
     assert result.exit_code == 0, result.output
-    help_output = strip_ansi(result.output)
+    help_output = " ".join(strip_ansi(result.output).split())
     assert "--resume" in help_output
     assert "immutable" in help_output
     assert "manifest" in help_output

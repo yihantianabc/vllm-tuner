@@ -580,17 +580,20 @@ fixed budget，adaptive p99 TTFT 为：
 - **回归**：重新解析两份 YAML，文档定向测试 11 passed；全量 suite 最终为 299 passed、
   1 skipped。该问题说明发布门禁还必须核对 package metadata 与远端 CI matrix 的交集。
 
-### 10.15 GitHub Actions 彩色帮助文本破坏纯字符串断言
+### 10.15 GitHub Actions 帮助文本样式和换行破坏纯字符串断言
 
 - **问题**：直接推送 `72e81c2` 后，GitHub CI run `31925921196` 在 Python 3.10 上得到
   298 passed、1 skipped，唯一失败是 `test_tune_help_exposes_manifest_validated_resume`。
-  `tune --help` 的 exit code 为 0，但 Actions 环境中的 Rich/Typer 输出包含 ANSI 样式码，
-  测试用原始字符串查找 `--resume` 时失败；本机无颜色的 `CliRunner` 输出没有复现。
+  `tune --help` 的 exit code 为 0，但 Actions 环境中的 Rich/Typer 输出包含 ANSI 样式码并
+  受终端宽度换行；测试用原始字符串查找 `--resume` 时失败，本机无颜色的 `CliRunner` 输出
+  没有复现。第一次只剥离 ANSI 后，run `31926290503` 已通过前五个断言，但说明短语
+  `require clean Git` 仍因跨行空白而失败，证明不能只处理颜色。
 - **影响**：业务 CLI 选项实际存在且帮助命令成功，失败属于跨环境测试表示差异；Release run
   `31925921228` 也在测试步骤失败，因此 semantic-release 被正确跳过，没有产生额外 tag 或
   version commit。
-- **修复**：测试先用 Click 的 `strip_ansi()` 规范化帮助文本，再验证 `--resume`、
-  `--allow-dirty-source` 及其不可变 manifest/clean-source 说明。生产 CLI 不改。
+- **修复**：测试先用 Click 的 `strip_ansi()` 去除样式，再用 `split()`/`join()` 折叠布局空白，
+  最后验证 `--resume`、`--allow-dirty-source` 及其不可变 manifest/clean-source 说明。
+  生产 CLI 不改。
 - **回归**：定向测试同时验证 exit code 和去样式后的完整选项合同；随后重新运行全量测试和
   GitHub 3.10/3.11/3.12 matrix。该修复不会改变 `34a25a2` 正式测量或 `ad36ee8` attestation。
 
