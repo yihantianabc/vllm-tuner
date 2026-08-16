@@ -69,7 +69,6 @@ PROXY_ENV_KEYS = frozenset({"ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"
 def port_is_available(host: str, port: int) -> bool:
     """Check whether a TCP address can be bound now."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind((host, port))
         except OSError:
