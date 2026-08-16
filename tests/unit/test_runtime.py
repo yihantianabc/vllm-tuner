@@ -162,6 +162,7 @@ async def test_stop_uses_saved_group_when_leader_already_exited(tmp_path, monkey
         server_module.os,
         "killpg",
         lambda pgid, sent_signal: signals.append((pgid, sent_signal)),
+        raising=False,
     )
 
     cleanup = await server.stop(graceful_timeout=0, kill_timeout=0)
@@ -177,6 +178,8 @@ async def test_stop_uses_saved_group_when_leader_already_exited(tmp_path, monkey
 
 @pytest.mark.asyncio
 async def test_stop_escalates_to_sigkill_when_child_ignores_sigterm(tmp_path, monkeypatch) -> None:
+    force_kill = getattr(signal, "SIGKILL", signal.SIGTERM)
+    monkeypatch.setattr(server_module.signal, "SIGKILL", force_kill, raising=False)
     server = ManagedVLLMServer(TuningConfig(model="test-model"), trial_dir=tmp_path)
     server.process = ExitedLeader()
     server.process_group_id = ExitedLeader.pid
@@ -189,11 +192,12 @@ async def test_stop_escalates_to_sigkill_when_child_ignores_sigterm(tmp_path, mo
         server_module.os,
         "killpg",
         lambda pgid, sent_signal: signals.append(sent_signal),
+        raising=False,
     )
 
     cleanup = await server.stop(graceful_timeout=0, kill_timeout=0)
 
-    assert signals == [signal.SIGTERM, signal.SIGKILL]
+    assert signals == [signal.SIGTERM, force_kill]
     assert cleanup.term_sent_monotonic_ns is not None
     assert cleanup.kill_sent_monotonic_ns is not None
     assert cleanup.process_group_empty is True
@@ -210,7 +214,7 @@ async def test_cleanup_gpu_pid_residual_is_not_clean(tmp_path, monkeypatch) -> N
     monkeypatch.setattr(server, "_process_group_alive", lambda pgid: next(states))
     monkeypatch.setattr(server, "_compute_pids", lambda: next(compute_pids))
     monkeypatch.setattr(server_module, "port_is_available", lambda *_: True)
-    monkeypatch.setattr(server_module.os, "killpg", lambda *_: None)
+    monkeypatch.setattr(server_module.os, "killpg", lambda *_: None, raising=False)
 
     cleanup = await server.stop(graceful_timeout=0, kill_timeout=0)
 
@@ -232,7 +236,7 @@ async def test_cleanup_tracks_new_gpu_pid_outside_the_process_group(tmp_path, mo
     monkeypatch.setattr(server, "_process_group_alive", lambda pgid: next(states))
     monkeypatch.setattr(server, "_compute_pids", lambda: next(compute_pids))
     monkeypatch.setattr(server_module, "port_is_available", lambda *_: True)
-    monkeypatch.setattr(server_module.os, "killpg", lambda *_: None)
+    monkeypatch.setattr(server_module.os, "killpg", lambda *_: None, raising=False)
 
     cleanup = await server.stop(graceful_timeout=0, kill_timeout=0)
 
@@ -254,7 +258,7 @@ async def test_cleanup_polls_until_tracked_gpu_pid_exits(tmp_path, monkeypatch) 
     monkeypatch.setattr(server, "_process_group_alive", lambda pgid: next(states))
     monkeypatch.setattr(server, "_compute_pids", lambda: next(compute_pids))
     monkeypatch.setattr(server_module, "port_is_available", lambda *_: True)
-    monkeypatch.setattr(server_module.os, "killpg", lambda *_: None)
+    monkeypatch.setattr(server_module.os, "killpg", lambda *_: None, raising=False)
 
     cleanup = await server.stop(graceful_timeout=0, kill_timeout=0.2)
 

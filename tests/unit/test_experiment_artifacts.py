@@ -56,7 +56,7 @@ def test_environment_fingerprint_tolerates_missing_sysconf(monkeypatch: pytest.M
     def missing_sysconf(_name: str) -> int:
         raise AttributeError("sysconf is unavailable")
 
-    monkeypatch.setattr(manifest_module.os, "sysconf", missing_sysconf)
+    monkeypatch.setattr(manifest_module.os, "sysconf", missing_sysconf, raising=False)
     monkeypatch.setattr(manifest_module, "_run_readonly", lambda *_args, **_kwargs: None)
 
     fingerprint = manifest_module.collect_environment_fingerprint()
