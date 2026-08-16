@@ -24,7 +24,12 @@ from vllm_tuner.benchmarks.sse_client import SSEBenchmarkClient
 from vllm_tuner.benchmarks.vllm_bench import VLLMBenchAdapter, VLLMBenchConfig
 from vllm_tuner.config.models import TuningConfig
 from vllm_tuner.experiment.artifacts import ArtifactStore
-from vllm_tuner.experiment.models import TrialResult, TrialStatus, utc_now_iso
+from vllm_tuner.experiment.models import (
+    TrialResult,
+    TrialStatus,
+    trial_provenance,
+    utc_now_iso,
+)
 from vllm_tuner.profiling.session import TelemetrySession
 from vllm_tuner.tuning.objective import compute_slo_goodput
 from vllm_tuner.workloads.trace import WorkloadTrace
@@ -387,6 +392,7 @@ class TrialController:
 
     async def run_trial(self, params: dict[str, Any], trial_id: str, method: str) -> TrialResult:
         """Execute START through terminal status, always cleaning the process group."""
+        provenance = trial_provenance(trial_id, method)
         trial_dir = self.artifacts.trial_dir(trial_id)
         self.artifacts.write_json(Path("trials") / trial_id / "params.json", params)
 
@@ -540,7 +546,7 @@ class TrialController:
             machine.transition(terminal, ",".join(objective.constraints.violations) or None)
             result = TrialResult(
                 trial_id=trial_id,
-                method=method,
+                **provenance,
                 status=terminal,
                 params=params,
                 started_at=started_at,
@@ -565,7 +571,7 @@ class TrialController:
                 machine.transition(TrialStatus.FAILED, failure.message)
             result = TrialResult(
                 trial_id=trial_id,
-                method=method,
+                **provenance,
                 status=TrialStatus.FAILED,
                 params=params,
                 started_at=started_at,
@@ -588,7 +594,7 @@ class TrialController:
                 machine.transition(TrialStatus.FAILED, failure.message)
             result = TrialResult(
                 trial_id=trial_id,
-                method=method,
+                **provenance,
                 status=TrialStatus.FAILED,
                 params=params,
                 started_at=started_at,

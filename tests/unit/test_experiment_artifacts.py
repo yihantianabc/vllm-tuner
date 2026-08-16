@@ -6,7 +6,12 @@ import subprocess
 import pytest
 
 import vllm_tuner.experiment.manifest as manifest_module
-from vllm_tuner.experiment.artifacts import ArtifactStore
+from vllm_tuner.experiment.artifacts import (
+    EXPERIMENT_INTEGRITY_FILE,
+    GENERATED_EXPERIMENT_FILES,
+    SUMMARY_COMPACT_FILE,
+    ArtifactStore,
+)
 from vllm_tuner.experiment.manifest import (
     build_manifest,
     sha256_file,
@@ -18,6 +23,7 @@ from vllm_tuner.experiment.models import (
     ExperimentSpec,
     TrialResult,
     TrialStatus,
+    trial_provenance,
 )
 
 
@@ -61,7 +67,7 @@ def _write_consistent_trial(store: ArtifactStore, trial_id: str = "trial-0") -> 
     }
     result = TrialResult(
         trial_id=trial_id,
-        method="default",
+        **trial_provenance(trial_id, "default"),
         status=TrialStatus.COMPLETE,
         params={"max_num_seqs": 8},
         client=aggregate,
@@ -592,3 +598,370 @@ def test_cached_trial_round_trips_one_failed_request_out_of_five_hundred(tmp_pat
     assert loaded.client["total_input_tokens"] == 998
     assert loaded.client["total_output_tokens"] == 1497
     store.validate_cached_trial(loaded, require_telemetry=False)
+
+
+def _write_attestable_experiment(store: ArtifactStore) -> TrialResult:
+    store.initialize()
+    trace_path = store.write_text("trace.jsonl", '{"request_id":"search"}\n')
+    holdout_path = store.write_text("holdout-trace.jsonl", '{"request_id":"holdout"}\n')
+    trace_sha256 = sha256_file(trace_path)
+    holdout_sha256 = sha256_file(holdout_path)
+    manifest = _manifest(trace_sha256).model_copy(
+        update={
+            "holdout_trace_sha256": holdout_sha256,
+            "source_commit": "measurement-commit",
+            "source_tree_sha256": "measurement-tree",
+            "dirty_worktree": False,
+            "experiment_config_sha256": "experiment-config",
+        }
+    )
+    store.save_manifest(manifest)
+    store.write_yaml("experiment.yaml", {"model": "model"})
+    store.write_text("trace.sha256", f"{trace_sha256}  trace.jsonl\n")
+    store.write_text("holdout-trace.sha256", f"{holdout_sha256}  holdout-trace.jsonl\n")
+    metrics = {
+        "goodput": 1.0,
+        "p99_ttft": 0.1,
+        "p99_tpot": 0.01,
+        "preemption_count": 0,
+    }
+    simulation = {
+        "policy_name": "adaptive",
+        "seed": 1,
+        "metrics": metrics,
+        "requests": [{"request_id": "scheduler-request"}],
+        "steps": [{"step": 1}],
+        "decisions": [{"budget": 512}],
+    }
+    section = {
+        "trace_name": "calibration",
+        "adaptive": simulation,
+        "fixed_baselines": {},
+        "best_fixed_budget": None,
+        "goodput_gain_vs_best": 0.0,
+        "negative_gain_conditions": [],
+    }
+    scheduler = {
+        "calibration": section,
+        "held_out": {**section, "trace_name": "held_out"},
+        "has_negative_result": False,
+        "negative_gain_conditions": [],
+    }
+    store.write_json("aggregate/scheduler-ablation.json", scheduler)
+    store.write_json(
+        "summary.json",
+        {
+            "experiment_id": store.root.name,
+            "manifest": manifest.model_dump(mode="json"),
+            "scheduler_ablation": scheduler,
+        },
+    )
+    store.write_text("report/report.md", "# report\n")
+    store.write_text("report/report.html", "<html></html>\n")
+    store.write_json("report/plot-manifest.json", {"schema_version": 1, "plots": {}})
+    return _write_consistent_trial(store, "default-0000")
+
+
+def test_experiment_attestation_compacts_scheduler_and_seals_exact_tree(tmp_path) -> None:
+    store = ArtifactStore(tmp_path, "exp")
+    result = _write_attestable_experiment(store)
+    raw_path = store.aggregate_dir / "scheduler-ablation.json"
+    raw_sha256 = sha256_file(raw_path)
+    anchor = store.trial_dir(result.trial_id) / "artifact-integrity.json"
+    anchor_sha256 = sha256_file(anchor)
+    summary_path = store.root / "summary.json"
+    summary_sha256 = sha256_file(summary_path)
+    summary_size = summary_path.stat().st_size
+
+    attested = store.attest_experiment_artifacts(
+        attestation={
+            "kind": "unit-test-attestation",
+            "attestation_source_commit": "tool-commit",
+            "attestation_source_tree_sha256": "tool-tree",
+            "attestation_dirty_worktree": True,
+            "measurement_source_commit": "caller-must-not-override",
+            "measurement_source_tree_sha256": "caller-must-not-override",
+            "trace_sha256": "caller-must-not-override",
+        }
+    )
+
+    assert attested["already_sealed"] is False
+    store.validate_experiment_integrity()
+    assert (store.root / EXPERIMENT_INTEGRITY_FILE).is_file()
+    assert sha256_file(raw_path) == raw_sha256
+    assert sha256_file(anchor) == anchor_sha256
+    assert sha256_file(summary_path) == summary_sha256
+    assert summary_path.stat().st_size == summary_size
+    raw_summary = json.loads(summary_path.read_text())
+    assert raw_summary["scheduler_ablation"] == json.loads(raw_path.read_text())
+    compact_summary = json.loads((store.root / SUMMARY_COMPACT_FILE).read_text())
+    compact = compact_summary["scheduler_ablation"]
+    assert compact["raw_artifact"] == "aggregate/scheduler-ablation.json"
+    assert compact["raw_sha256"] == raw_sha256
+    assert compact["raw_size_bytes"] == raw_path.stat().st_size
+    assert "requests" not in compact["calibration"]["adaptive"]
+    assert json.loads(raw_path.read_text())["calibration"]["adaptive"]["requests"]
+    original = compact_summary["experiment_attestation"]["original_summary"]
+    assert original == {
+        "path": "summary.json",
+        "size_bytes": summary_size,
+        "sha256": summary_sha256,
+    }
+    audit = json.loads((store.root / "experiment-audit.json").read_text())
+    assert audit["trial_semantic_validated"] == 1
+    assert audit["legacy_provenance_trial_count"] == 0
+    lineage = json.loads((store.root / "lineage.json").read_text())
+    assert lineage["trials"][0]["provenance_kind"] == "recorded"
+    integrity = json.loads((store.root / EXPERIMENT_INTEGRITY_FILE).read_text())
+    record = integrity["attestations"][-1]
+    assert record["attestation_kind"] == "unit-test-attestation"
+    assert record["measurement_source_commit"] == "measurement-commit"
+    assert record["measurement_source_tree_sha256"] == "measurement-tree"
+    assert record["measurement_dirty_worktree"] is False
+    assert record["attestation_source_commit"] == "tool-commit"
+    assert record["attestation_source_tree_sha256"] == "tool-tree"
+    assert record["attestation_dirty_worktree"] is True
+    assert record["attested_at_utc"]
+    assert record["experiment_config_sha256"] == "experiment-config"
+    assert record["trace_sha256"] == raw_summary["manifest"]["trace_sha256"]
+    assert SUMMARY_COMPACT_FILE in integrity["files"]
+
+    first_seal = sha256_file(store.root / EXPERIMENT_INTEGRITY_FILE)
+    repeated = store.attest_experiment_artifacts(attestation={"kind": "unit-test-attestation"})
+    assert repeated["already_sealed"] is True
+    assert sha256_file(store.root / EXPERIMENT_INTEGRITY_FILE) == first_seal
+
+    resealed = store.attest_experiment_artifacts(
+        attestation={"kind": "authorized-reseal"},
+        reseal=True,
+    )
+    assert resealed["already_sealed"] is False
+    assert sha256_file(store.root / EXPERIMENT_INTEGRITY_FILE) != first_seal
+    assert sha256_file(raw_path) == raw_sha256
+    assert sha256_file(anchor) == anchor_sha256
+    assert sha256_file(summary_path) == summary_sha256
+    assert summary_path.stat().st_size == summary_size
+    store.validate_experiment_integrity()
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("aggregate/scheduler-ablation.json", "artifact checksum mismatch"),
+        ("trials/default-0000/server.log", "artifact checksum mismatch"),
+        ("unsealed-root.txt", "file set mismatch"),
+    ],
+)
+def test_experiment_integrity_rejects_root_child_and_added_file_tampering(
+    tmp_path, target, expected
+) -> None:
+    store = ArtifactStore(tmp_path, "exp")
+    _write_attestable_experiment(store)
+    store.attest_experiment_artifacts(attestation={"kind": "initial"})
+
+    store.write_text(target, "tampered\n")
+
+    with pytest.raises(ValueError, match=expected):
+        store.validate_experiment_integrity()
+    with pytest.raises(ValueError, match=expected):
+        store.attest_experiment_artifacts(
+            attestation={"kind": "must-not-bless-corruption"},
+            reseal=True,
+        )
+
+
+def test_failed_first_attestation_does_not_write_partial_root_views(tmp_path) -> None:
+    store = ArtifactStore(tmp_path, "exp")
+    _write_attestable_experiment(store)
+    summary_path = store.root / "summary.json"
+    summary_sha256 = sha256_file(summary_path)
+    store.write_text("trials/default-0000/server.log", "corrupted before attestation\n")
+
+    with pytest.raises(ValueError, match="artifact checksum mismatch: server.log"):
+        store.attest_experiment_artifacts(attestation={"kind": "must-fail"})
+
+    assert sha256_file(summary_path) == summary_sha256
+    for relative in (
+        EXPERIMENT_INTEGRITY_FILE,
+        *GENERATED_EXPERIMENT_FILES,
+    ):
+        assert not (store.root / relative).exists()
+
+
+def test_missing_required_input_fails_before_writing_any_attestation_view(tmp_path) -> None:
+    store = ArtifactStore(tmp_path, "exp")
+    _write_attestable_experiment(store)
+    summary_path = store.root / "summary.json"
+    summary_sha256 = sha256_file(summary_path)
+    summary_size = summary_path.stat().st_size
+    (store.root / "report/report.html").unlink()
+
+    with pytest.raises(ValueError, match=r"input preflight failed.*report/report.html"):
+        store.attest_experiment_artifacts(attestation={"kind": "must-fail"})
+
+    assert sha256_file(summary_path) == summary_sha256
+    assert summary_path.stat().st_size == summary_size
+    assert not (store.root / EXPERIMENT_INTEGRITY_FILE).exists()
+    for relative in GENERATED_EXPERIMENT_FILES:
+        assert not (store.root / relative).exists()
+
+
+def test_legacy_repeat_and_holdout_lineage_is_derived_without_rewriting_children(
+    tmp_path,
+) -> None:
+    store = ArtifactStore(tmp_path, "exp")
+    _write_attestable_experiment(store)
+    manifest_path = store.root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["artifact_schema_version"] = "4"
+    store.write_json("manifest.json", manifest)
+    summary = json.loads((store.root / "summary.json").read_text())
+    summary["manifest"] = manifest
+    store.write_json("summary.json", summary)
+
+    child_hashes: dict[str, str] = {}
+    for phase in ("repeat", "holdout"):
+        trial_id = f"{phase}-default-0-0"
+        result = _write_consistent_trial(store, trial_id).model_copy(
+            update={
+                "method": phase,
+                "phase": None,
+                "source_method": None,
+                "source_trial_id": None,
+            }
+        )
+        store.seal_trial_artifacts(result)
+        child_hashes[trial_id] = sha256_file(store.trial_dir(trial_id) / "artifact-integrity.json")
+
+    store.attest_experiment_artifacts(attestation={"kind": "legacy-lineage"})
+
+    lineage = json.loads((store.root / "lineage.json").read_text())
+    trials = {row["trial_id"]: row for row in lineage["trials"]}
+    for phase in ("repeat", "holdout"):
+        trial_id = f"{phase}-default-0-0"
+        assert trials[trial_id] == {
+            "trial_id": trial_id,
+            "recorded_method": phase,
+            "phase": phase,
+            "source_method": "default",
+            "source_trial_id": "default-0000",
+            "provenance_kind": "derived_from_trial_id",
+            "path": f"trials/{trial_id}/artifact-integrity.json",
+            "size_bytes": (store.trial_dir(trial_id) / "artifact-integrity.json").stat().st_size,
+            "sha256": child_hashes[trial_id],
+        }
+        assert (
+            sha256_file(store.trial_dir(trial_id) / "artifact-integrity.json")
+            == child_hashes[trial_id]
+        )
+    audit = json.loads((store.root / "experiment-audit.json").read_text())
+    assert audit["derived_repeat_holdout_trial_count"] == 2
+    assert audit["derived_provenance_trial_count"] == 2
+
+
+def test_attestation_derives_legacy_capacity_empirical_rates_from_sealed_trials(
+    tmp_path,
+) -> None:
+    store = ArtifactStore(tmp_path, "exp")
+    _write_attestable_experiment(store)
+    trial_id = "capacity-rate-1-repeat-0"
+    result = _write_consistent_trial(store, trial_id)
+    client = {
+        **result.client,
+        "offered_requests_per_sec": 1.0,
+        "empirical_scheduled_requests_per_sec": 0.8,
+        "achieved_requests_per_sec": 0.75,
+    }
+    result = result.model_copy(update={"client": client})
+    benchmark_path = store.trial_dir(trial_id) / "benchmark-raw.json"
+    benchmark = json.loads(benchmark_path.read_text())
+    benchmark["aggregate"] = client
+    store.write_json(f"trials/{trial_id}/benchmark-raw.json", benchmark)
+    store.seal_trial_artifacts(result)
+    summary_path = store.root / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["capacity_sweep"] = {
+        "points": [
+            {
+                "trial_id": trial_id,
+                "offered_requests_per_sec": 1.0,
+                "measured_offered_requests_per_sec": 1.0,
+                "achieved_requests_per_sec": 0.75,
+            }
+        ],
+        "by_rate": [],
+    }
+    store.write_json("summary.json", summary)
+    summary_sha256 = sha256_file(summary_path)
+
+    store.attest_experiment_artifacts(attestation={"kind": "legacy-capacity"})
+
+    assert sha256_file(summary_path) == summary_sha256
+    audit = json.loads((store.root / "experiment-audit.json").read_text())
+    semantics = audit["capacity_rate_semantics"]
+    assert semantics["summary_capacity_schema"] == "legacy_target_alias_v1"
+    assert semantics["trials"] == [
+        {
+            "trial_id": trial_id,
+            "status": "COMPLETE",
+            "target_offered_requests_per_sec": 1.0,
+            "empirical_scheduled_requests_per_sec": 0.8,
+            "achieved_requests_per_sec": 0.75,
+        }
+    ]
+    assert semantics["by_target_rate"] == [
+        {
+            "target_offered_requests_per_sec": 1.0,
+            "measured_count": 1,
+            "median_empirical_scheduled_requests_per_sec": 0.8,
+            "min_empirical_scheduled_requests_per_sec": 0.8,
+            "max_empirical_scheduled_requests_per_sec": 0.8,
+        }
+    ]
+    compact = json.loads((store.root / SUMMARY_COMPACT_FILE).read_text())
+    assert compact["capacity_rate_semantics"] == semantics
+
+
+def test_capacity_attestation_semantics_rejects_point_and_trial_mismatch(tmp_path) -> None:
+    store = ArtifactStore(tmp_path, "exp")
+    result = TrialResult(
+        trial_id="capacity-rate-1-repeat-0",
+        **trial_provenance("capacity-rate-1-repeat-0", "capacity"),
+        status=TrialStatus.COMPLETE,
+        params={},
+        client={
+            "offered_requests_per_sec": 1.0,
+            "empirical_scheduled_requests_per_sec": 0.8,
+        },
+    )
+    mismatched = {
+        "capacity_sweep": {
+            "points": [
+                {
+                    "trial_id": result.trial_id,
+                    "target_offered_requests_per_sec": 1.0,
+                    "empirical_scheduled_requests_per_sec": 0.9,
+                }
+            ]
+        }
+    }
+
+    with pytest.raises(ValueError, match="inconsistent empirical scheduled rate"):
+        store._capacity_rate_semantics(mismatched, [result])
+
+    with pytest.raises(ValueError, match="Capacity summary/trial set mismatch"):
+        store._capacity_rate_semantics({"capacity_sweep": {"points": []}}, [result])
+
+
+def test_schema_five_cached_repeat_requires_canonical_provenance(tmp_path) -> None:
+    store = ArtifactStore(tmp_path, "exp")
+    store.initialize()
+    store.save_manifest(_manifest())
+    result = _write_consistent_trial(store, "repeat-default-0-0")
+
+    store.validate_cached_trial(result, require_telemetry=False)
+    result.source_method = "random"
+    store.seal_trial_artifacts(result)
+
+    with pytest.raises(ValueError, match="provenance source_method"):
+        store.validate_cached_trial(result, require_telemetry=False)

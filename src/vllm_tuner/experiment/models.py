@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -93,7 +94,7 @@ class ExperimentSpec(BaseModel):
     source_commit: Optional[str] = None
     source_tree_sha256: Optional[str] = None
     dirty_worktree: bool = False
-    artifact_schema_version: str = "4"
+    artifact_schema_version: str = "5"
     report_artifacts: dict[str, Any] = Field(default_factory=dict)
     artifact_warnings: list[str] = Field(default_factory=list)
 
@@ -105,6 +106,9 @@ class TrialResult(BaseModel):
 
     trial_id: str
     method: str
+    phase: Optional[str] = None
+    source_method: Optional[str] = None
+    source_trial_id: Optional[str] = None
     status: TrialStatus
     params: dict[str, Any]
     started_at: str = Field(default_factory=utc_now_iso)
@@ -128,3 +132,48 @@ class TrialResult(BaseModel):
             and self.cleanup_status is not None
             and self.cleanup_status.get("clean") is True
         )
+
+
+class TrialProvenance(TypedDict):
+    method: str
+    phase: str
+    source_method: str
+    source_trial_id: Optional[str]
+
+
+def trial_provenance(trial_id: str, fallback_method: str) -> TrialProvenance:
+    """Return canonical source/phase fields for runner-controlled trial IDs."""
+    repeated = re.fullmatch(r"(repeat|holdout)-(default|random|tpe)-(\d+)-(\d+)", trial_id)
+    if repeated is not None:
+        phase, method, source_number, _ = repeated.groups()
+        return {
+            "method": method,
+            "phase": phase,
+            "source_method": method,
+            "source_trial_id": f"{method}-{int(source_number):04d}",
+        }
+
+    searched = re.fullmatch(r"(default|random|tpe)-(\d{4})", trial_id)
+    if searched is not None:
+        method = searched.group(1)
+        return {
+            "method": method,
+            "phase": "search",
+            "source_method": method,
+            "source_trial_id": None,
+        }
+
+    if trial_id.startswith("capacity-rate-"):
+        return {
+            "method": "capacity",
+            "phase": "capacity",
+            "source_method": "default",
+            "source_trial_id": None,
+        }
+
+    return {
+        "method": fallback_method,
+        "phase": "search",
+        "source_method": fallback_method,
+        "source_trial_id": None,
+    }

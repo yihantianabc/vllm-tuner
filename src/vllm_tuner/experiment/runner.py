@@ -37,9 +37,20 @@ from vllm_tuner.workloads.generator import generate_trace
 from vllm_tuner.workloads.profiles import PROFILES
 from vllm_tuner.workloads.trace import TraceEntry, WorkloadTrace
 
-from .artifacts import ArtifactStore
-from .manifest import build_manifest, git_state, validate_resume_manifest
-from .models import ExperimentSpec, TrialResult, TrialStatus, utc_now_iso
+from .artifacts import EXPERIMENT_INTEGRITY_FILE, SUMMARY_COMPACT_FILE, ArtifactStore
+from .manifest import (
+    build_manifest,
+    git_state,
+    source_tree_sha256,
+    validate_resume_manifest,
+)
+from .models import (
+    ExperimentSpec,
+    TrialResult,
+    TrialStatus,
+    trial_provenance,
+    utc_now_iso,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +93,7 @@ class SLOTuneExperimentRunner:
         self.search_space = VLLMSearchSpace(config)
         self.manifest: Optional[ExperimentSpec] = None
         self._artifact_warnings: list[str] = []
+        self._root_integrity_validated = False
 
     def _load_tokenizer(self) -> Any:
         if self._tokenizer is None:
@@ -185,6 +197,18 @@ class SLOTuneExperimentRunner:
         return format(rate, ".12g").replace("-", "m").replace("+", "").replace(".", "p")
 
     @staticmethod
+    def _empirical_scheduled_rate(trace: WorkloadTrace) -> Optional[float]:
+        """Return the realized request rate of a finite persisted schedule."""
+        if len(trace.entries) < 2:
+            return None
+        scheduled_span = (
+            trace.entries[-1].scheduled_offset_seconds - trace.entries[0].scheduled_offset_seconds
+        )
+        if scheduled_span <= 0:
+            return None
+        return (len(trace.entries) - 1) / scheduled_span
+
+    @staticmethod
     def _capacity_trace(source: WorkloadTrace, request_rate: float) -> WorkloadTrace:
         """Reuse exact requests while generating one deterministic open-loop schedule."""
         if not math.isfinite(request_rate) or request_rate <= 0:
@@ -226,7 +250,10 @@ class SLOTuneExperimentRunner:
         self.artifacts.write_json(
             point_relative,
             {
+                # Keep the established field as a target-valued compatibility alias.
                 "offered_requests_per_sec": trace.request_rate,
+                "target_offered_requests_per_sec": trace.request_rate,
+                "empirical_scheduled_requests_per_sec": self._empirical_scheduled_rate(trace),
                 "repeat": repeat,
                 "trace_sha256": trace.checksum(),
                 "server_parameters": self.search_space.get_default_params(),
@@ -254,11 +281,15 @@ class SLOTuneExperimentRunner:
     @staticmethod
     def _capacity_row(result: TrialResult, request_rate: float, repeat: int) -> dict[str, Any]:
         error_types = result.client.get("error_types")
+        empirical_scheduled_rate = result.client.get("empirical_scheduled_requests_per_sec")
         return {
             "trial_id": result.trial_id,
             "repeat": repeat,
+            # Deprecated target-valued aliases retained for existing JSON/Parquet readers.
             "offered_requests_per_sec": request_rate,
-            "measured_offered_requests_per_sec": result.client.get("offered_requests_per_sec"),
+            "measured_offered_requests_per_sec": request_rate,
+            "target_offered_requests_per_sec": request_rate,
+            "empirical_scheduled_requests_per_sec": empirical_scheduled_rate,
             "achieved_requests_per_sec": result.client.get("achieved_requests_per_sec"),
             "goodput_requests_per_sec": result.client.get("goodput_requests_per_sec"),
             "request_throughput": result.client.get("request_throughput"),
@@ -332,11 +363,17 @@ class SLOTuneExperimentRunner:
                 except Exception as error:
                     result = TrialResult(
                         trial_id=trial_id,
-                        method="capacity",
+                        **trial_provenance(trial_id, "capacity"),
                         status=TrialStatus.FAILED,
                         params=dict(default_params),
                         finished_at=utc_now_iso(),
-                        client={"offered_requests_per_sec": request_rate},
+                        client={
+                            "offered_requests_per_sec": request_rate,
+                            "target_offered_requests_per_sec": request_rate,
+                            "empirical_scheduled_requests_per_sec": (
+                                self._empirical_scheduled_rate(capacity_trace)
+                            ),
+                        },
                         constraints={"feasible": False, "violations": ["capacity_point_error"]},
                         failure_reason={
                             "type": type(error).__name__,
@@ -345,6 +382,8 @@ class SLOTuneExperimentRunner:
                         },
                     )
             result.artifacts.update(trace_artifacts)
+            for field, value in trial_provenance(trial_id, result.method).items():
+                setattr(result, field, value)
             self._finalize_trial_artifacts(result)
             rows.append(self._capacity_row(result, request_rate, repeat))
         return rows
@@ -432,6 +471,9 @@ class SLOTuneExperimentRunner:
             existing = ExperimentSpec.model_validate_json(manifest_path.read_text(encoding="utf-8"))
             validate_resume_manifest(existing, requested)
             manifest = existing
+            if (self.artifacts.root / EXPERIMENT_INTEGRITY_FILE).is_file():
+                self.artifacts.validate_experiment_integrity()
+                self._root_integrity_validated = True
         else:
             if root_preexisting:
                 raise ValueError(
@@ -1003,6 +1045,8 @@ class SLOTuneExperimentRunner:
             if cached is not None:
                 return cached
             result = await controller.run_trial(params, trial_id, trial_id.split("-", 1)[0])
+            for field, value in trial_provenance(trial_id, result.method).items():
+                setattr(result, field, value)
             self._finalize_trial_artifacts(result)
             return result
 
@@ -1036,6 +1080,8 @@ class SLOTuneExperimentRunner:
                 if cached is not None:
                     return cached
                 result = await holdout_controller.run_trial(params, trial_id, "holdout")
+                for field, value in trial_provenance(trial_id, result.method).items():
+                    setattr(result, field, value)
                 self._finalize_trial_artifacts(result)
                 return result
 
@@ -1054,6 +1100,9 @@ class SLOTuneExperimentRunner:
         self._save_table("aggregate/capacity-sweep-summary.parquet", capacity_summary)
 
         scheduler = self._scheduler_ablation(trace, holdout_trace)
+        scheduler_path = self.artifacts.aggregate_dir / "scheduler-ablation.json"
+        if not scheduler_path.is_file():
+            self.artifacts.write_json("aggregate/scheduler-ablation.json", scheduler)
         scheduler_rows: list[dict[str, Any]] = []
         for label, section in (
             ("calibration", scheduler["calibration"]),
@@ -1110,6 +1159,8 @@ class SLOTuneExperimentRunner:
             engine_series=engine_series,
             gpu_series=gpu_series,
             telemetry_source=telemetry_source,
+            best=best,
+            scheduler_negative_conditions=scheduler.get("negative_gain_conditions", []),
         )
         plot_manifest_path = report_paths["plot_manifest"]
         plot_manifest = json.loads(plot_manifest_path.read_text(encoding="utf-8"))
@@ -1153,4 +1204,17 @@ class SLOTuneExperimentRunner:
             "report": {name: str(path) for name, path in report_paths.items()},
         }
         self.artifacts.write_json("summary.json", summary)
-        return summary
+        integrity_exists = (self.artifacts.root / EXPERIMENT_INTEGRITY_FILE).is_file()
+        attestation_commit, attestation_dirty, _ = git_state(self.repository)
+        self.artifacts.attest_experiment_artifacts(
+            attestation={
+                "kind": "runner-completion",
+                "artifact_schema_version": manifest.artifact_schema_version,
+                "attestation_source_commit": attestation_commit,
+                "attestation_source_tree_sha256": source_tree_sha256(self.repository),
+                "attestation_dirty_worktree": attestation_dirty,
+            },
+            reseal=integrity_exists,
+            validate_existing=not self._root_integrity_validated,
+        )
+        return json.loads((self.artifacts.root / SUMMARY_COMPACT_FILE).read_text(encoding="utf-8"))

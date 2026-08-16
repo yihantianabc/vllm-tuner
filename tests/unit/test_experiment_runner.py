@@ -12,12 +12,14 @@ from vllm_tuner.config.models import (
     TuningConfig,
     WorkloadConfig,
 )
+from vllm_tuner.experiment.artifacts import SUMMARY_COMPACT_FILE
 from vllm_tuner.experiment.models import (
     EnvironmentFingerprint,
     ExperimentSpec,
     TrialResult,
     TrialStatus,
 )
+from vllm_tuner.experiment.manifest import sha256_file
 from vllm_tuner.experiment.runner import SLOTuneExperimentRunner
 from vllm_tuner.profiling.nvml_session import NVMLSample, summarize_nvml_samples
 from vllm_tuner.tuning.optimizer import SearchMethod, SearchRun, SearchTrial
@@ -115,6 +117,13 @@ class CapacityTrialController(FakeTrialController):
         if trial_id == "capacity-rate-1-repeat-0":
             raise RuntimeError("injected capacity failure")
         rate = float(self.trace.request_rate or 2.0)
+        scheduled_span = (
+            self.trace.entries[-1].scheduled_offset_seconds
+            - self.trace.entries[0].scheduled_offset_seconds
+        )
+        empirical_scheduled_rate = (
+            (len(self.trace.entries) - 1) / scheduled_span if scheduled_span > 0 else None
+        )
         aggregate = self._write_measured_artifacts(trial_id, params, num_requests=3)
         return TrialResult(
             trial_id=trial_id,
@@ -126,6 +135,8 @@ class CapacityTrialController(FakeTrialController):
                 **aggregate,
                 "goodput_requests_per_sec": 0.75 * rate,
                 "offered_requests_per_sec": rate,
+                "target_offered_requests_per_sec": rate,
+                "empirical_scheduled_requests_per_sec": empirical_scheduled_rate,
                 "achieved_requests_per_sec": 0.9 * rate,
                 "request_throughput": 0.9 * rate,
                 "output_throughput": 10.0 * rate,
@@ -171,14 +182,23 @@ def _fake_scheduler():
         "preemption_count": 0,
     }
     section = {
-        "adaptive": {"metrics": metrics},
+        "trace_name": "calibration",
+        "adaptive": {
+            "policy_name": "adaptive",
+            "seed": 1,
+            "metrics": metrics,
+            "requests": [{"request_id": "scheduler-request"}],
+            "steps": [{"step": 1}],
+            "decisions": [{"budget": 512}],
+        },
         "fixed_baselines": {},
+        "best_fixed_budget": None,
         "goodput_gain_vs_best": 0.0,
         "negative_gain_conditions": [],
     }
     return {
         "calibration": section,
-        "held_out": section,
+        "held_out": {**section, "trace_name": "held_out"},
         "has_negative_result": False,
         "negative_gain_conditions": [],
     }
@@ -247,6 +267,29 @@ async def test_experiment_runner_writes_search_repeat_and_report(tmp_path, monke
         ):
             assert (trial_dir / name).exists()
     assert (runner.artifacts.root / "summary.json").exists()
+    assert (runner.artifacts.root / SUMMARY_COMPACT_FILE).exists()
+    assert (runner.artifacts.root / "experiment-integrity.json").exists()
+    assert (runner.artifacts.root / "lineage.json").exists()
+    assert (runner.artifacts.root / "experiment-audit.json").exists()
+    runner.artifacts.validate_experiment_integrity()
+    raw_scheduler = runner.artifacts.root / "aggregate/scheduler-ablation.json"
+    assert summary["scheduler_ablation"]["raw_sha256"] == sha256_file(raw_scheduler)
+    assert "requests" not in summary["scheduler_ablation"]["calibration"]["adaptive"]
+    scheduler_raw = json.loads(raw_scheduler.read_text())
+    assert scheduler_raw["calibration"]["adaptive"]["requests"]
+    original_summary = json.loads((runner.artifacts.root / "summary.json").read_text())
+    assert original_summary["scheduler_ablation"] == scheduler_raw
+    assert "experiment_attestation" not in original_summary
+    assert summary == json.loads((runner.artifacts.root / SUMMARY_COMPACT_FILE).read_text())
+    repeat_summary = json.loads(
+        (runner.artifacts.trials_dir / "repeat-default-0-0" / "summary.json").read_text()
+    )
+    assert repeat_summary["method"] == "default"
+    assert repeat_summary["phase"] == "repeat"
+    assert repeat_summary["source_method"] == "default"
+    assert repeat_summary["source_trial_id"] == "default-0000"
+    report_markdown = (runner.artifacts.report_dir / "report.md").read_text()
+    assert "validated default configuration remained best" in report_markdown
 
 
 @pytest.mark.asyncio
@@ -289,6 +332,15 @@ async def test_capacity_sweep_repeats_defaults_and_continues_after_failure(
     points = summary["capacity_sweep"]["points"]
     assert len(points) == 4
     assert {point["offered_requests_per_sec"] for point in points} == {1.0, 4.0}
+    assert all(
+        point["target_offered_requests_per_sec"] == point["offered_requests_per_sec"]
+        for point in points
+    )
+    assert all(
+        point["measured_offered_requests_per_sec"] == point["target_offered_requests_per_sec"]
+        for point in points
+    )
+    assert all(point["empirical_scheduled_requests_per_sec"] is not None for point in points)
     assert sum(point["status"] == "FAILED" for point in points) == 1
     assert sum(point["status"] == "COMPLETE" for point in points) == 3
     assert all(
@@ -309,6 +361,8 @@ async def test_capacity_sweep_repeats_defaults_and_continues_after_failure(
     grouped = pd.read_parquet(runner.artifacts.root / "aggregate/capacity-sweep-summary.parquet")
     assert len(raw) == 4
     assert {
+        "target_offered_requests_per_sec",
+        "empirical_scheduled_requests_per_sec",
         "output_throughput",
         "p50_ttft_ms",
         "peak_waiting_requests",
@@ -328,6 +382,25 @@ async def test_capacity_sweep_repeats_defaults_and_continues_after_failure(
     assert rate_one["median_peak_waiting_requests"] == 1.0
     assert rate_one["median_p95_memory_mb"] == 500.0
     assert rate_one["median_energy_per_output_token_joules"] == 1.25
+    complete_rate_one = next(
+        point
+        for point in points
+        if point["target_offered_requests_per_sec"] == 1.0 and point["status"] == "COMPLETE"
+    )
+    capacity_trace = (
+        runner.artifacts.trials_dir / complete_rate_one["trial_id"] / "capacity-trace.jsonl"
+    )
+    trace_rows = [json.loads(line) for line in capacity_trace.read_text().splitlines()]
+    expected_empirical = (len(trace_rows) - 1) / (
+        trace_rows[-1]["scheduled_offset_seconds"] - trace_rows[0]["scheduled_offset_seconds"]
+    )
+    assert complete_rate_one["empirical_scheduled_requests_per_sec"] == pytest.approx(
+        expected_empirical
+    )
+    assert complete_rate_one["empirical_scheduled_requests_per_sec"] != pytest.approx(1.0)
+    assert rate_one["median_empirical_scheduled_requests_per_sec"] == pytest.approx(
+        expected_empirical
+    )
 
     plot_manifest = json.loads((runner.artifacts.report_dir / "plot-manifest.json").read_text())
     capacity_plot = plot_manifest["plots"]["capacity_curve"]

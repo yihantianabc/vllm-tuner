@@ -4,11 +4,12 @@ This guide separates three evidence tiers that must not be merged:
 
 1. the **legacy bring-up artifact**, retained only as a historical boundary;
 2. the **current Qwen3-0.6B smoke**, used to verify wiring and cleanup;
-3. the **Qwen2.5-3B formal protocol**, used for benchmark evidence only after a complete,
-   immutable artifact has been recorded.
+3. the **Qwen2.5-3B formal experiments**, used for benchmark evidence only through the completed,
+   audited artifact roots recorded below.
 
-No 3B performance result is currently recorded in this repository. Checked-in configuration,
-unit tests, and a deterministic scheduler simulation do not substitute for a GPU measurement.
+Two Qwen2.5-3B-Instruct formal GPU results are recorded at clean measurement commit `34a25a2`.
+Checked-in configuration, unit tests, and deterministic scheduler output still do not substitute
+for those GPU measurements, and the scheduler simulation is never presented as a runtime gain.
 
 ## Evidence boundary
 
@@ -17,9 +18,9 @@ unit tests, and a deterministic scheduler simulation do not substitute for a GPU
 | Legacy bring-up | Qwen3-0.6B | Preserved as `reproduction_gpu_20260815_a` | The pre-refactor chain completed two requests |
 | Current smoke | Qwen3-0.6B | Current-format `smoke-20260815-b` exists; each new run still needs its own artifact | Model load, SSE requests, telemetry, cleanup, and artifact wiring |
 | Current 3B preflight | Qwen2.5-3B-Instruct | `qwen25-3b-preflight-20260815-a` completed a two-request default run and one repeat | 3B model and current pipeline wiring only |
-| Formal chat | Qwen2.5-3B-Instruct | Protocol ready; result not yet recorded | None until the immutable artifact is linked |
-| Formal RAG | Qwen2.5-3B-Instruct | Protocol ready; result not yet recorded | None until the immutable artifact is linked |
-| Scheduler ablation | Synthetic or supplied deterministic trace | CPU mechanism experiment | Simulator budget, fairness, starvation, and downside behavior only |
+| Formal Chat | Qwen2.5-3B-Instruct | 96-trial result at `qwen25-3b-chat-formal-34a25a2` | Repeated/held-out/capacity result; no significant tuning gain |
+| Formal RAG | Qwen2.5-3B-Instruct | 96-trial result at `qwen25-3b-rag-formal-34a25a2` | Default remains best; capacity knee near nominal 16 req/s |
+| Scheduler ablation | Synthetic deterministic traces | CPU mechanism experiment embedded in both formal reports | 0% adaptive goodput gain and retained TTFT regressions; no runtime GPU claim |
 
 The legacy artifact and its frozen environment are documented in
 [`docs/BASELINE_20260815.md`](docs/BASELINE_20260815.md). Its study data live under
@@ -139,7 +140,7 @@ Before calling the smoke successful, verify all of the following:
 This run is deliberately tiny. Do not quote it as throughput, tail-latency, memory, energy, or
 optimization evidence.
 
-## 4. Run the formal 3B protocols
+## 4. Reproduce the formal 3B protocols
 
 The formal model must exist at `/root/autodl-tmp/models/Qwen2.5-3B-Instruct`. Start with unique
 experiment names and keep the chat and RAG artifacts separate:
@@ -180,6 +181,31 @@ held-out outcome, and failures. Follow
 [`docs/FORMAL_EXPERIMENTS.md`](docs/FORMAL_EXPERIMENTS.md) for the complete run and reporting
 checklists.
 
+The recorded reference artifacts used these exact protocols and the clean revision
+`34a25a2e10951bfab1c2a86b4c60aff5bef785df`. Always use a new study name when rerunning; do not
+write into either reference root. The checked-in
+[`formal evidence snapshot`](docs/results/qwen25-3b-34a25a2.md) records their trace hashes,
+environment, repeat/holdout medians, capacity points, failure classification, and limitations.
+
+Create or validate the post-run root seals with the explicit attestation command:
+
+```bash
+./scripts/run_reproduction_command.sh attest \
+  --study-name qwen25-3b-chat-formal-34a25a2 \
+  --results-root /root/autodl-tmp/slotune-results
+
+./scripts/run_reproduction_command.sh attest \
+  --study-name qwen25-3b-rag-formal-34a25a2 \
+  --results-root /root/autodl-tmp/slotune-results
+```
+
+When a valid `experiment-integrity.json` already exists, this command validates it and is
+idempotent. `--reseal` is an explicit rebuild operation: it validates the prior seal first and
+refuses corrupted evidence. The seal records measurement versus attestation provenance and covers
+`lineage.json`, `experiment-audit.json`, the additive `summary.compact-v1.json` sidecar,
+scheduler negative-result views, non-trial evidence, and all per-trial integrity anchors. The
+original root `summary.json` and raw `aggregate/scheduler-ablation.json` remain byte-identical.
+
 ## 5. Run the deterministic scheduler ablation
 
 This CPU-only command writes JSON and Markdown to an explicit, initially absent directory:
@@ -192,21 +218,37 @@ It compares fixed budgets 512/1024/2048/4096/8192 with adaptive on calibration a
 traces. It preserves no-benefit and regression conditions. These outputs validate simulator
 mechanics; they do not demonstrate a vLLM runtime speedup.
 
+To include the pre-generated formal report in the three-to-five-minute demo without launching a
+GPU run, pass its root as a second argument:
+
+```bash
+./scripts/run_demo.sh \
+  /root/autodl-tmp/slotune-demo/scheduler-formal-demo \
+  /root/autodl-tmp/slotune-results/qwen25-3b-rag-formal-34a25a2
+```
+
 ## Current real-results register
 
 ### Formal Qwen2.5-3B results
 
-**Status: NOT YET RECORDED.** Do not fill the table from console output, a smoke run, a simulator,
-or a best search observation without repeats and held-out validation.
+**Status: RECORDED AND AUDITED.** The table is backed by repeated, held-out, capacity, raw-request,
+telemetry, cleanup, and integrity evidence—not console output, smoke data, simulator output, or a
+single best search observation.
 
 | Workload | Artifact root or archive | Commit | Trace checksum | Repeats | Held-out result | Failures | Result summary |
 |---|---|---|---|---:|---|---|---|
-| Chat | Pending | Pending final commit | Pending | 0 | Pending | Pending | No claim |
-| RAG | Pending | Pending final commit | Pending | 0 | Pending | Pending | No claim |
+| Chat | `/root/autodl-tmp/slotune-results/qwen25-3b-chat-formal-34a25a2` | `34a25a2e10951bfab1c2a86b4c60aff5bef785df` | search `89e5d6f9…b1c6b9`; holdout `aac77609…0b84` | 3 per candidate; 3 per capacity point | TPE-11: 8.360697 req/s, p99 TTFT 62.348 ms; 3/3 feasible | 7 constraint-INFEASIBLE, 0 request failures, 0 FAILED/PRUNED | No ≥15% goodput or ≥20% TTFT gain; tested capacity lower bound ≥27.883 req/s |
+| RAG | `/root/autodl-tmp/slotune-results/qwen25-3b-rag-formal-34a25a2` | `34a25a2e10951bfab1c2a86b4c60aff5bef785df` | search `d92f7fc8…0c57`; holdout `f13d9121…c1fd` | 3 per candidate; 3 per capacity point | Default: 4.311275 req/s, p99 TTFT 431.624 ms; 3/3 feasible | 7 constraint-INFEASIBLE, 0 request failures, 0 FAILED/PRUNED | Default remains best; knee near nominal 16 req/s; 2/3 nominal-32 repeats violate TTFT |
 
-To update a row, first validate the immutable artifact tree, then link the archived report and
-record exact medians/ranges or confidence intervals. Retain regressions, infeasible trials,
-missing telemetry, and cases where adaptive scheduling has no benefit.
+Each workload contains 48 search, 15 repeat, 15 holdout, and 18 capacity trials: 89 COMPLETE plus
+seven constraint-INFEASIBLE outcomes. Every one of the 48,000 measured requests per workload
+succeeded. Chat's target/search-empirical/holdout-empirical arrival rates are
+8.0/8.029529/8.456300 req/s; RAG's are 4.0/4.254534/4.331800 req/s. This target-versus-realized
+distinction prevents misreading goodput slightly above the YAML target.
+
+The exact tables, ranges, plots, negative tuning analysis, CPU scheduler regressions, and artifact
+audit are in [`docs/results/qwen25-3b-34a25a2.md`](docs/results/qwen25-3b-34a25a2.md). Preserve
+these outcomes when adding future evidence; do not replace them with a favorable search sample.
 
 ## Reproduction checklist
 
@@ -220,6 +262,11 @@ missing telemetry, and cases where adaptive scheduling has no benefit.
 - Keep simulator results separate from runtime GPU results.
 - Link every reported number to its immutable artifact and environment fingerprint.
 - Preserve negative/no-benefit conditions rather than selecting only favorable trials.
+- Treat Chat's highest tested feasible point as a capacity lower bound, not a saturation estimate.
+- Keep the deferred M6 prefix-caching matrix separate; it is optional and does not block the core
+  two-workload Definition of Done.
 
 The milestone-by-milestone implementation/evidence gap is tracked in
-[`docs/PLAN_AUDIT.md`](docs/PLAN_AUDIT.md).
+[`docs/PLAN_AUDIT.md`](docs/PLAN_AUDIT.md). The actual implementation timeline, detached formal
+run, debugging evidence, and post-run audit are recorded in
+[`docs/DEVELOPMENT_LOG.md`](docs/DEVELOPMENT_LOG.md).

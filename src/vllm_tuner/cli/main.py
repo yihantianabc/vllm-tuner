@@ -15,6 +15,12 @@ from vllm_tuner.config.validation import (
     load_yaml_config,
     validate_study_name,
 )
+from vllm_tuner.experiment.artifacts import (
+    EXPERIMENT_INTEGRITY_FILE,
+    SUMMARY_COMPACT_FILE,
+    ArtifactStore,
+)
+from vllm_tuner.experiment.manifest import git_state, source_tree_sha256
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -172,6 +178,80 @@ def _experiment_directory(results_root: str, study_name: str) -> Path:
     return Path(results_root).expanduser().resolve() / validate_study_name(study_name)
 
 
+def _experiment_store(experiment_dir: Path) -> ArtifactStore:
+    return ArtifactStore(experiment_dir.parent, experiment_dir.name)
+
+
+def _validate_sealed_experiment(store: ArtifactStore) -> bool:
+    if not (store.root / EXPERIMENT_INTEGRITY_FILE).is_file():
+        return False
+    store.validate_experiment_integrity()
+    return True
+
+
+def _inside_experiment(path: Path, experiment_dir: Path) -> bool:
+    try:
+        path.resolve().relative_to(experiment_dir.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _require_safe_experiment_output(
+    path: Path,
+    experiment_dir: Path,
+    *,
+    kind: str,
+) -> None:
+    if not _inside_experiment(path, experiment_dir):
+        return
+    relative = path.resolve().relative_to(experiment_dir.resolve())
+    if kind == "report":
+        reserved = {
+            "report.html",
+            "report.md",
+            "plot-manifest.json",
+            "comparison-table.md",
+            "capacity-curve.html",
+            "capacity-curve.png",
+            "pareto.html",
+            "pareto.png",
+            "search-trajectory.html",
+            "search-trajectory.png",
+            "telemetry-timeline.html",
+            "telemetry-timeline.png",
+            "scheduler-negative-results.md",
+        }
+        if len(relative.parts) < 2 or relative.parts[0] != "report" or relative.name in reserved:
+            raise ValueError(
+                "Report output inside an experiment must be a new export under report/; "
+                "identity, raw, trial, and canonical report artifacts cannot be overwritten"
+            )
+        return
+    if kind == "best" and (
+        relative.parent != Path(".") or relative.name not in {"best.yaml", "best.json"}
+    ):
+        raise ValueError("Best export inside an experiment must be exactly best.yaml or best.json")
+
+
+def _reseal_cli_write(store: ArtifactStore, *, kind: str, was_sealed: bool) -> None:
+    if not was_sealed:
+        return
+    store.seal_experiment_artifacts(attestation=_attestation_identity(kind))
+    store.validate_experiment_integrity()
+
+
+def _attestation_identity(kind: str) -> dict[str, Any]:
+    repository = Path(__file__).resolve().parents[3]
+    commit, dirty, _ = git_state(repository)
+    return {
+        "kind": kind,
+        "attestation_source_commit": commit,
+        "attestation_source_tree_sha256": source_tree_sha256(repository),
+        "attestation_dirty_worktree": dirty,
+    }
+
+
 def _read_json_object(path: Path) -> dict[str, Any]:
     """Read a JSON object with an artifact-specific error message."""
     try:
@@ -185,7 +265,8 @@ def _read_json_object(path: Path) -> dict[str, Any]:
 
 def _load_slotune_summary(experiment_dir: Path) -> dict[str, Any]:
     """Load only the current immutable experiment layout."""
-    summary_path = experiment_dir / "summary.json"
+    compact_path = experiment_dir / SUMMARY_COMPACT_FILE
+    summary_path = compact_path if compact_path.is_file() else experiment_dir / "summary.json"
     if not summary_path.exists():
         legacy_path = experiment_dir / "configs" / "summary.json"
         if legacy_path.exists():
@@ -479,6 +560,54 @@ def _generate_slotune_markdown(
 
 
 @app.command()
+def attest(
+    study_name: str = typer.Option(
+        ...,
+        "--study-name",
+        "-n",
+        help="Completed SLOTune experiment to attest",
+    ),
+    results_root: str = typer.Option(
+        DEFAULT_RESULTS_ROOT,
+        "--results-root",
+        help="Root containing immutable SLOTune experiment directories",
+    ),
+    reseal: bool = typer.Option(
+        False,
+        "--reseal",
+        help="Explicitly authorize regeneration after validating an existing root seal",
+    ),
+):
+    """Compact and attest a completed experiment without changing sealed trial/raw evidence."""
+    try:
+        experiment_dir = _experiment_directory(results_root, study_name)
+        _load_slotune_summary(experiment_dir)
+        store = _experiment_store(experiment_dir)
+        result = store.attest_experiment_artifacts(
+            attestation=_attestation_identity("cli-post-run-attestation"),
+            reseal=reseal,
+        )
+        if result["already_sealed"]:
+            typer.echo(
+                f"Experiment root seal is valid and unchanged: "
+                f"{experiment_dir / EXPERIMENT_INTEGRITY_FILE}"
+            )
+        else:
+            audit = result["audit"]
+            typer.echo(
+                f"Experiment attested: {experiment_dir / EXPERIMENT_INTEGRITY_FILE} "
+                f"({audit['trial_semantic_validated']}/{audit['trial_count']} trials validated)"
+            )
+    except (FileNotFoundError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+    except Exception as error:
+        logger.error("Attest command failed: %s", error, exc_info=True)
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command()
 def report(
     study_name: str = typer.Option(
         ...,
@@ -510,6 +639,8 @@ def report(
         if selected_format not in {"html", "json", "markdown"}:
             raise ValueError(f"Unsupported format '{format}'")
         experiment_dir = _experiment_directory(results_root, study_name)
+        store = _experiment_store(experiment_dir)
+        was_sealed = _validate_sealed_experiment(store)
         summary = _load_slotune_summary(experiment_dir)
         aggregates = _read_aggregate_tables(experiment_dir)
         artifacts = _report_artifacts(experiment_dir, summary)
@@ -527,7 +658,14 @@ def report(
             destination = Path(output).expanduser().resolve()
             destination.parent.mkdir(parents=True, exist_ok=True)
             if destination != source:
+                _require_safe_experiment_output(destination, experiment_dir, kind="report")
                 shutil.copy2(source, destination)
+                if _inside_experiment(destination, experiment_dir):
+                    _reseal_cli_write(
+                        store,
+                        kind="cli-report-html-copy",
+                        was_sealed=was_sealed,
+                    )
                 typer.echo(f"HTML report copied to: {destination}")
             else:
                 typer.echo(f"HTML report reused: {source}")
@@ -539,6 +677,7 @@ def report(
             if output is not None
             else experiment_dir / "report" / f"report-export.{suffix}"
         )
+        _require_safe_experiment_output(destination, experiment_dir, kind="report")
         destination.parent.mkdir(parents=True, exist_ok=True)
         if selected_format == "json":
             payload = {
@@ -551,12 +690,24 @@ def report(
                 json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
+            if _inside_experiment(destination, experiment_dir):
+                _reseal_cli_write(
+                    store,
+                    kind="cli-report-json-export",
+                    was_sealed=was_sealed,
+                )
             typer.echo(f"JSON report exported: {destination}")
         else:
             destination.write_text(
                 _generate_slotune_markdown(summary, aggregates, artifacts),
                 encoding="utf-8",
             )
+            if _inside_experiment(destination, experiment_dir):
+                _reseal_cli_write(
+                    store,
+                    kind="cli-report-markdown-export",
+                    was_sealed=was_sealed,
+                )
             typer.echo(f"Markdown report exported: {destination}")
     except (FileNotFoundError, ValueError) as error:
         typer.echo(f"Error: {error}", err=True)
@@ -599,6 +750,8 @@ def export(
         if selected_format not in {"yaml", "json"}:
             raise ValueError(f"Unsupported format '{format}'")
         experiment_dir = _experiment_directory(results_root, study_name)
+        store = _experiment_store(experiment_dir)
+        was_sealed = _validate_sealed_experiment(store)
         summary = _load_slotune_summary(experiment_dir)
         best, validation_evidence, validation_reason = _validated_best(summary)
         if best is None:
@@ -607,6 +760,7 @@ def export(
             output_path = experiment_dir / f"best.{selected_format}"
         else:
             output_path = Path(output).expanduser().resolve()
+        _require_safe_experiment_output(output_path, experiment_dir, kind="best")
 
         from vllm_tuner.reporting.export import export_best_config
 
@@ -627,6 +781,8 @@ def export(
                 ],
             },
         )
+        if _inside_experiment(output_path, experiment_dir):
+            _reseal_cli_write(store, kind="cli-best-export", was_sealed=was_sealed)
         typer.echo(f"Validated best configuration exported to: {output_path}")
     except (FileNotFoundError, ValueError) as error:
         typer.echo(f"Error: {error}", err=True)

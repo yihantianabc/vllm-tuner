@@ -62,8 +62,8 @@ def test_formal_3b_configs_have_equal_budget_repeats_and_holdout() -> None:
     assert profiles.keys() == {"chat", "rag"}
 
 
-def test_readme_preserves_fork_attribution_and_evidence_boundaries() -> None:
-    """Project identity and smoke/formal boundaries remain prominent."""
+def test_readme_preserves_attribution_and_completed_evidence_boundaries() -> None:
+    """Project identity, formal evidence, and smoke boundaries remain prominent."""
 
     readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
     attribution = "Forked from jranaraki/vllm-tuner."
@@ -81,13 +81,18 @@ def test_readme_preserves_fork_attribution_and_evidence_boundaries() -> None:
         "src/vllm_tuner/benchmarks/sse_client.py",
         "tests/unit/test_benchmark_sse_client.py",
         "docs/METHODOLOGY.md#artifact-acceptance",
-        "Pending final commit",
+        "aa9d70a",
+        "34a25a2e10951bfab1c2a86b4c60aff5bef785df",
         "Qwen3-0.6B",
-        "smoke test only",
+        "smoke tests only",
         "config/formal_3b_chat.yaml",
         "config/formal_3b_rag.yaml",
         "qwen25-3b-preflight-20260815-a",
-        "Pending an immutable artifact",
+        "docs/results/qwen25-3b-34a25a2.md",
+        "docs/DEVELOPMENT_LOG.md",
+        "89 COMPLETE, 7 constraint-INFEASIBLE, 0 request failures",
+        "capacity is only a ≥27.883 req/s lower bound",
+        "15% goodput or 20% p99-TTFT improvement target",
         "Limitations and future work",
     )
     for text in required:
@@ -95,8 +100,8 @@ def test_readme_preserves_fork_attribution_and_evidence_boundaries() -> None:
     assert readme.index(attribution) < readme.index(focus)
 
 
-def test_reproduction_guide_separates_legacy_smoke_preflight_and_formal() -> None:
-    """Reproduction commands cannot turn historical or tiny runs into formal evidence."""
+def test_reproduction_guide_separates_evidence_tiers_and_records_formal_runs() -> None:
+    """Formal rows are complete without promoting historical, smoke, or simulator output."""
 
     reproduction = (REPOSITORY / "REPRODUCTION.md").read_text(encoding="utf-8")
     required = (
@@ -114,8 +119,17 @@ def test_reproduction_guide_separates_legacy_smoke_preflight_and_formal() -> Non
         "--trace /root/autodl-tmp/traces/chat-search.jsonl",
         "/root/autodl-tmp/slotune-results/<study-name>",
         "Current real-results register",
-        "Status: NOT YET RECORDED",
-        "No claim",
+        "Status: RECORDED AND AUDITED",
+        "qwen25-3b-chat-formal-34a25a2",
+        "qwen25-3b-rag-formal-34a25a2",
+        "48,000 measured requests per workload",
+        "8.0/8.029529/8.456300 req/s",
+        "4.0/4.254534/4.331800 req/s",
+        "0 request failures",
+        "run_reproduction_command.sh attest",
+        "experiment-integrity.json",
+        "summary.compact-v1.json",
+        "--reseal",
     )
     for text in required:
         assert text in reproduction
@@ -167,10 +181,11 @@ def test_reproduction_environment_is_locked_and_inherited_by_formal_commands() -
         subprocess.run(["bash", "-n", str(REPOSITORY / "scripts" / script)], check=True)
 
 
-def test_project_plan_audit_tracks_implementation_and_evidence_separately() -> None:
-    """The M0-M6 audit must expose formal evidence gaps instead of implying completion."""
+def test_project_plan_audit_tracks_completed_evidence_and_deferrals() -> None:
+    """The M0-M6 audit must prove core completion without hiding deferred work."""
 
     audit = (REPOSITORY / "docs/PLAN_AUDIT.md").read_text(encoding="utf-8")
+    compact_audit = " ".join(audit.split())
     for milestone in ("M0", "M1", "M2", "M3", "M4", "M5", "M6"):
         assert f"{milestone}:" in audit
     required = (
@@ -178,14 +193,16 @@ def test_project_plan_audit_tracks_implementation_and_evidence_separately() -> N
         "§0–2 identity, goals, value",
         "§24 official references",
         "Implementation and test evidence",
-        "Formal evidence pending",
-        "3B pipeline preflight—not the formal chat/RAG experiment",
+        "Completed formal evidence",
+        "Core M0–M5 complete; optional M6 deferred explicitly",
         "Definition-of-Done audit",
-        "**Not complete**; 3B preflight is not formal",
-        "does **not** satisfy the plan's experimental Definition of Done",
+        "Core Definition of Done complete with negative performance outcome",
+        "Each workload has 89 COMPLETE and seven constraint-INFEASIBLE outcomes",
+        "Chat yields only a tested",
+        "M6 prefix-caching",
     )
     for text in required:
-        assert text in audit
+        assert text in compact_audit
 
 
 def test_demo_script_has_valid_shell_syntax_and_explicit_output_contract() -> None:
@@ -194,5 +211,83 @@ def test_demo_script_has_valid_shell_syntax_and_explicit_output_contract() -> No
     script = REPOSITORY / "scripts/run_demo.sh"
     subprocess.run(["bash", "-n", str(script)], check=True)
     contents = script.read_text(encoding="utf-8")
-    assert "[[ $# -ne 1 ]]" in contents
-    assert '--output-dir "$1"' in contents
+    assert "[[ $# -lt 1 || $# -gt 2 ]]" in contents
+    assert 'OUTPUT_DIR="$1"' in contents
+    assert 'FORMAL_ROOT="${2:-}"' in contents
+    assert '--output-dir "${OUTPUT_DIR}"' in contents
+    assert "report/report.html" in contents
+    assert "report/capacity-curve.png" in contents
+    assert "report/scheduler-negative-results.md" in contents
+    assert "no GPU experiment was launched" in contents
+
+
+def test_formal_result_snapshot_records_negative_results_and_claim_boundaries() -> None:
+    """The checked-in result index must retain exact provenance and negative outcomes."""
+
+    snapshot = (REPOSITORY / "docs/results/qwen25-3b-34a25a2.md").read_text(encoding="utf-8")
+    compact_snapshot = " ".join(snapshot.split())
+    required = (
+        "34a25a2e10951bfab1c2a86b4c60aff5bef785df",
+        "89e5d6f9e505f72aec5594323c4fc6f3e35ed5c0fa7d7927d4d1b1ff63b1c6b9",
+        "aac7760903a8c609756fbead137a694065dd8c1193081e97f6884653c0200b84",
+        "d92f7fc83a04e57aaa424ef9da1e92ecd40f33fe00247f45dde75583f3af0c57",
+        "f13d91219e7d18f15c5fcb5f4d2f00f138ac1c39ba124717849277c52322c1fd",
+        "89 COMPLETE and seven constraint-INFEASIBLE",
+        "48,000 measured requests per workload",
+        "8.029529 req/s",
+        "8.456300 req/s",
+        "4.254534 req/s",
+        "4.331800 req/s",
+        "Empirical scheduled req/s",
+        "0.944593",
+        "30.226983",
+        "1.018862",
+        "32.603574",
+        "legacy `measured_offered_requests_per_sec` is a target-rate alias",
+        "at least 15% more goodput",
+        "20% lower p99 TTFT",
+        "capacity lower bound of at least 27.883 req/s",
+        "two of three repeats are INFEASIBLE",
+        "exactly 0% goodput gain",
+        "CPU simulator output",
+        "M6 prefix-caching/APC experiments are deferred P1 work",
+        "chat-capacity.png",
+        "rag-capacity.png",
+        "chat-pareto.png",
+        "rag-pareto.png",
+        "experiment-integrity.json",
+        "lineage.json",
+        "experiment-audit.json",
+        "summary.compact-v1.json",
+        "scheduler-negative-results.json",
+        "report/scheduler-negative-results.md",
+        "ArtifactStore.attest_experiment_artifacts",
+        "ArtifactStore.validate_experiment_integrity",
+        "vllm-tuner attest",
+        "--reseal",
+    )
+    for text in required:
+        assert text in compact_snapshot
+
+
+def test_completed_docs_contain_no_stale_formal_pending_placeholders() -> None:
+    """Completed evidence pages cannot regress to the pre-measurement placeholder state."""
+
+    paths = (
+        REPOSITORY / "README.md",
+        REPOSITORY / "REPRODUCTION.md",
+        REPOSITORY / "docs/FORMAL_EXPERIMENTS.md",
+        REPOSITORY / "docs/PLAN_AUDIT.md",
+        REPOSITORY / "docs/DEVELOPMENT_LOG.md",
+    )
+    stale_phrases = (
+        "Pending final commit",
+        "Pending an immutable artifact",
+        "Status: NOT YET RECORDED",
+        "Formal evidence pending",
+        "does **not** satisfy the plan's experimental Definition of Done",
+    )
+    for path in paths:
+        contents = path.read_text(encoding="utf-8")
+        for phrase in stale_phrases:
+            assert phrase not in contents, (path, phrase)

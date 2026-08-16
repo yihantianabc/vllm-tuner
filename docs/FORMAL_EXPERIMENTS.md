@@ -1,19 +1,30 @@
-# Formal 3B experiment protocol
+# Formal 3B experiment protocol and recorded outcome
 
 ## Status
 
-The repository contains validated formal **protocols**, not fabricated benchmark results.
+The repository contains the validated protocols and a checked-in snapshot of two completed
+formal artifacts. Raw evidence remains on `/root/autodl-tmp`; all performance statements below
+are restricted to those artifacts and the clean measurement revision.
 
 | Item | Status | Permitted claim |
 |---|---|---|
 | Qwen3-0.6B reproduction | completed bring-up smoke | end-to-end wiring only |
-| Qwen2.5-3B chat config | ready to run | configuration/schema only |
-| Qwen2.5-3B RAG config | ready to run | configuration/schema only |
-| adaptive scheduler | deterministic simulator tested | mechanism/fairness behavior only |
+| Qwen2.5-3B Chat | completed: 96 terminal trials | repeated/held-out/capacity result; no significant tuning gain |
+| Qwen2.5-3B RAG | completed: 96 terminal trials | default remains best; capacity knee near nominal 16 req/s |
+| adaptive scheduler | deterministic CPU simulator completed | 0% goodput gain and retained TTFT regressions; no GPU runtime claim |
 | runtime adaptive vLLM scheduler | not integrated | no GPU performance claim |
 
-Do not add a throughput, latency, memory, energy, or percentage-improvement number here unless the
-supporting immutable artifact is checked and linked.
+The formal evidence snapshot is
+[`results/qwen25-3b-34a25a2.md`](results/qwen25-3b-34a25a2.md). It links the external roots,
+measurement commit, trace and model hashes, repeats, holdout, constraints, negative results, and
+artifact audit. Do not add another throughput, latency, memory, energy, or improvement claim
+without an equivalently checked artifact.
+
+After a run, `vllm-tuner attest --study-name <id> --results-root <root>` creates or validates the
+root integrity seal, phase/source lineage, experiment audit, compact scheduler reference, and
+scheduler negative-result views. Rebuilding requires explicit `--reseal`, which validates the old
+seal first and rejects corrupt evidence. The compact reference is the additive
+`summary.compact-v1.json` sidecar; it does not replace the original root `summary.json`.
 
 ## Hardware and software scope
 
@@ -27,6 +38,10 @@ The templates assume:
 
 The output applies only to the recorded combination. The smoke model Qwen3-0.6B must not be used
 as the headline benchmark model.
+
+The completed runs used one RTX 5090, vLLM 0.16.0, PyTorch 2.9.1+cu130, driver 595.71.05, and
+clean source commit `34a25a2e10951bfab1c2a86b4c60aff5bef785df`. Later attestation or
+documentation revisions are not measurement provenance.
 
 ## Checked-in workloads
 
@@ -126,6 +141,12 @@ At every point retain offered rate, achieved throughput, output-token throughput
 p50/p95/p99 TTFT/TPOT/E2E, errors/timeouts, waiting queue, peak KV usage, preemptions, peak/mean/p95
 VRAM, GPU utilization, and optional energy per output token.
 
+In the recorded result, every Chat point through nominal 32 req/s remained feasible; its maximum
+tested median goodput, 27.883 req/s, is therefore only a capacity lower bound. RAG plateaued near
+11.8 achieved req/s, with an observed knee near nominal 16 req/s and two of three nominal-32
+repeats INFEASIBLE on the 1,500 ms TTFT constraint. See the
+[exact capacity tables and plots](results/qwen25-3b-34a25a2.md#capacity).
+
 ## Scheduler ablation
 
 The CPU-only reproducible demo is:
@@ -137,6 +158,11 @@ The CPU-only reproducible demo is:
 It compares fixed 512/1024/2048/4096/8192 budgets with adaptive on deterministic calibration and
 held-out traces. JSON and Markdown preserve negative/no-benefit conditions. These data explain
 simulator behavior and must remain separate from measured vLLM results.
+
+The formal artifacts retained a negative result: adaptive goodput gain was 0% for both workloads
+on calibration and held-out simulator traces. Relative to the best fixed budget, p99 TTFT was
+worse by 25.36%/15.58% for Chat and 167.22%/332.79% for RAG (calibration/held-out). This does not
+measure an adaptive vLLM runtime.
 
 ## Reporting checklist
 
@@ -152,3 +178,37 @@ simulator behavior and must remain separate from measured vLLM results.
 If no feasible candidate or no adaptive gain is found, that is the result. Preserve the failure
 or negative-condition artifact and explain the workload/pressure regime rather than replacing it
 with an optimistic estimate.
+
+## Recorded formal result
+
+Both workloads executed 48 equal-budget search trials, 15 candidate repeats, 15 held-out repeats,
+and 18 default capacity trials. Each has 89 COMPLETE and seven constraint-INFEASIBLE outcomes,
+zero FAILED/PRUNED outcomes, and 48,000/48,000 successful measured requests. The seven
+INFEASIBLE trials in each workload are latency or memory constraint results—not request
+failures.
+
+The finite generated traces also make the target/empirical distinction material. Chat's YAML
+target is 8.0 req/s while its search/holdout traces realize 8.029529/8.456300 req/s; RAG's target
+is 4.0 req/s while its traces realize 4.254534/4.331800 req/s. Goodput slightly above a YAML
+target remains below the corresponding empirical arrival rate.
+
+Neither workload reaches the preregistered success threshold of 15% higher goodput or 20% lower
+p99 TTFT at equal goodput. Chat's validated TPE candidate differs from repeated default by only
++0.0068% goodput and −3.57% p99 TTFT, and its held-out TTFT is 0.52% worse. RAG retains default
+as best; TPE-5's repeat/holdout goodput deltas are −0.0013%/+0.0141%, with TTFT improvements of
+7.54%/8.49%. See the [complete snapshot](results/qwen25-3b-34a25a2.md#tuning-outcome).
+
+M6 prefix-caching/APC is explicitly deferred P1 work. The plan marks prefix caching optional; its
+deferral does not invalidate the completed core M0–M5 path or the two-workload formal evidence.
+
+## Implementation revisions
+
+These are real commits in the local SLOTune branch; the links deliberately target this repository
+rather than implying that unpublished commits exist in the upstream GitHub repository.
+
+| Revision | Scope |
+|---|---|
+| `aa9d70a` | Trustworthy benchmark, telemetry, lifecycle, constrained tuning, simulator, artifacts, reports, and tests |
+| `0d605c3` | Pinned reproducible data-disk GPU environment |
+| `b8f2dc1` | Methodology and formal protocol publication |
+| `34a25a2` | Disabled-holdout smoke compatibility; clean revision used for all final measurements |

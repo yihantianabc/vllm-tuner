@@ -8,6 +8,9 @@ import yaml
 from typer.testing import CliRunner
 
 from vllm_tuner.cli.main import app
+from vllm_tuner.experiment.artifacts import SUMMARY_COMPACT_FILE, ArtifactStore
+from vllm_tuner.experiment.manifest import sha256_file
+from vllm_tuner.experiment.models import TrialResult, TrialStatus
 from vllm_tuner.reporting.export import export_best_config
 
 runner = CliRunner()
@@ -147,6 +150,68 @@ def _write_experiment(results_root: Path, experiment_id: str = "exp") -> Path:
     return experiment
 
 
+def _write_attestable_experiment(results_root: Path) -> tuple[Path, ArtifactStore]:
+    experiment = _write_experiment(results_root)
+    store = ArtifactStore(results_root, "exp")
+    store.write_yaml("experiment.yaml", {"model": "fake/model"})
+    trace_path = store.write_text("trace.jsonl", '{"request_id":"search"}\n')
+    holdout_path = store.write_text("holdout-trace.jsonl", '{"request_id":"holdout"}\n')
+    trace_sha256 = sha256_file(trace_path)
+    holdout_sha256 = sha256_file(holdout_path)
+    store.write_text("trace.sha256", f"{trace_sha256}  trace.jsonl\n")
+    store.write_text("holdout-trace.sha256", f"{holdout_sha256}  holdout-trace.jsonl\n")
+    manifest_path = experiment / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["trace_sha256"] = trace_sha256
+    manifest["holdout_trace_sha256"] = holdout_sha256
+    store.write_json("manifest.json", manifest)
+    metrics = {
+        "goodput": 1.0,
+        "p99_ttft": 0.1,
+        "p99_tpot": 0.01,
+        "preemption_count": 0,
+    }
+    simulation = {
+        "policy_name": "adaptive",
+        "seed": 1,
+        "metrics": metrics,
+        "requests": [{"request_id": "scheduler"}],
+        "steps": [{"step": 1}],
+        "decisions": [{"budget": 512}],
+    }
+    section = {
+        "trace_name": "calibration",
+        "adaptive": simulation,
+        "fixed_baselines": {},
+        "best_fixed_budget": None,
+        "goodput_gain_vs_best": 0.0,
+        "negative_gain_conditions": [],
+    }
+    scheduler = {
+        "calibration": section,
+        "held_out": {**section, "trace_name": "held_out"},
+        "has_negative_result": False,
+        "negative_gain_conditions": [],
+    }
+    store.write_json("aggregate/scheduler-ablation.json", scheduler)
+    summary_path = experiment / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["manifest"] = manifest
+    summary["scheduler_ablation"] = scheduler
+    store.write_json("summary.json", summary)
+    store.write_json("report/plot-manifest.json", {"schema_version": 1, "plots": {}})
+    failed = TrialResult(
+        trial_id="failed-0",
+        method="default",
+        status=TrialStatus.FAILED,
+        params={"max_num_seqs": 8},
+        constraints={"feasible": False, "violations": ["test_failure"]},
+        failure_reason={"type": "TEST_FAILURE", "message": "expected"},
+    )
+    store.ensure_trial_artifacts(failed)
+    return experiment, store
+
+
 def test_report_reuses_or_copies_existing_static_html(tmp_path: Path) -> None:
     experiment = _write_experiment(tmp_path)
     reused = runner.invoke(
@@ -173,6 +238,112 @@ def test_report_reuses_or_copies_existing_static_html(tmp_path: Path) -> None:
     )
     assert copied.exit_code == 0, copied.output
     assert copied_path.read_text() == "<html>SLOTune static report</html>"
+
+
+def test_attest_is_idempotent_requires_valid_existing_seal_and_explicit_reseal(
+    tmp_path: Path,
+) -> None:
+    experiment, store = _write_attestable_experiment(tmp_path)
+    raw = experiment / "aggregate/scheduler-ablation.json"
+    anchor = experiment / "trials/failed-0/artifact-integrity.json"
+    raw_sha256 = sha256_file(raw)
+    anchor_sha256 = sha256_file(anchor)
+    summary = experiment / "summary.json"
+    summary_sha256 = sha256_file(summary)
+    summary_size = summary.stat().st_size
+
+    first = runner.invoke(
+        app,
+        ["attest", "-n", "exp", "--results-root", str(tmp_path)],
+    )
+    assert first.exit_code == 0, first.output
+    assert "1/1 trials validated" in first.output
+    seal = experiment / "experiment-integrity.json"
+    first_seal = sha256_file(seal)
+    assert sha256_file(raw) == raw_sha256
+    assert sha256_file(anchor) == anchor_sha256
+    assert sha256_file(summary) == summary_sha256
+    assert summary.stat().st_size == summary_size
+    compact = json.loads((experiment / SUMMARY_COMPACT_FILE).read_text())
+    assert compact["experiment_attestation"]["original_summary"] == {
+        "path": "summary.json",
+        "size_bytes": summary_size,
+        "sha256": summary_sha256,
+    }
+    integrity = json.loads(seal.read_text())
+    record = integrity["attestations"][-1]
+    assert record["attestation_kind"] == "cli-post-run-attestation"
+    assert record["attested_at_utc"]
+    assert "attestation_source_commit" in record
+    assert record["attestation_source_tree_sha256"]
+    store.validate_experiment_integrity()
+
+    repeated = runner.invoke(
+        app,
+        ["attest", "-n", "exp", "--results-root", str(tmp_path)],
+    )
+    assert repeated.exit_code == 0, repeated.output
+    assert "valid and unchanged" in repeated.output
+    assert sha256_file(seal) == first_seal
+
+    resealed = runner.invoke(
+        app,
+        ["attest", "-n", "exp", "--results-root", str(tmp_path), "--reseal"],
+    )
+    assert resealed.exit_code == 0, resealed.output
+    assert sha256_file(seal) != first_seal
+    assert sha256_file(raw) == raw_sha256
+    assert sha256_file(anchor) == anchor_sha256
+    assert sha256_file(summary) == summary_sha256
+    assert summary.stat().st_size == summary_size
+    store.validate_experiment_integrity()
+
+    store.write_text("report/report.md", "corrupted after seal\n")
+    corrupt = runner.invoke(
+        app,
+        ["attest", "-n", "exp", "--results-root", str(tmp_path), "--reseal"],
+    )
+    assert corrupt.exit_code == 1
+    assert "artifact checksum mismatch: report/report.md" in corrupt.output
+
+
+def test_cli_exports_cannot_overwrite_raw_or_identity_artifacts(tmp_path: Path) -> None:
+    experiment = _write_experiment(tmp_path)
+    raw_path = experiment / "aggregate/trials.parquet"
+    raw_sha256 = sha256_file(raw_path)
+
+    report_result = runner.invoke(
+        app,
+        [
+            "report",
+            "-n",
+            "exp",
+            "--results-root",
+            str(tmp_path),
+            "-f",
+            "json",
+            "-o",
+            str(raw_path),
+        ],
+    )
+    assert report_result.exit_code == 1
+    assert "cannot be overwritten" in report_result.output
+    assert sha256_file(raw_path) == raw_sha256
+
+    export_result = runner.invoke(
+        app,
+        [
+            "export",
+            "-n",
+            "exp",
+            "--results-root",
+            str(tmp_path),
+            "-o",
+            str(experiment / "summary.json"),
+        ],
+    )
+    assert export_result.exit_code == 1
+    assert "must be exactly best.yaml or best.json" in export_result.output
 
 
 def test_report_exports_current_summary_and_aggregate_parquet(tmp_path: Path) -> None:

@@ -118,13 +118,13 @@ def markdown_comparison(rows: Sequence[Mapping[str, Any]]) -> str:
 
 def _scheduler_markdown(rows: Sequence[Mapping[str, Any]]) -> str:
     lines = [
-        "| Trace | Policy | Budget | Goodput | p99 TTFT | p99 TPOT | Fairness | Starvation |",
-        "|---|---|---:|---:|---:|---:|---:|---:|",
+        "| Trace | Policy | Budget | Goodput | p99 TTFT | p99 TPOT | Fairness | Starvation | Preemptions |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
             "| {trace} | {policy} | {budget} | {goodput} | {ttft} | {tpot} | "
-            "{fairness} | {starvation} |".format(
+            "{fairness} | {starvation} | {preemptions} |".format(
                 trace=row.get("trace", "unknown"),
                 policy=row.get("policy", "unknown"),
                 budget=_display(row.get("budget")),
@@ -133,9 +133,66 @@ def _scheduler_markdown(rows: Sequence[Mapping[str, Any]]) -> str:
                 tpot=_display(row.get("p99_tpot")),
                 fairness=_display(row.get("fairness_index")),
                 starvation=_display(row.get("starvation_count")),
+                preemptions=_display(row.get("preemption_count")),
             )
         )
     return "\n".join(lines) + "\n" if rows else "Data unavailable.\n"
+
+
+def _validated_best_markdown(best: Optional[Mapping[str, Any]]) -> str:
+    if not isinstance(best, Mapping) or best.get("validated") is not True:
+        return "No candidate passed the recorded repeat and holdout gates.\n"
+    method = str(best.get("method", "unknown"))
+    conclusion = (
+        "The validated default configuration remained best; no tuning improvement is claimed."
+        if method == "default"
+        else f"The validated `{method}` candidate remained best after repeat and holdout gates."
+    )
+    parameters = best.get("parameters")
+    parameter_text = (
+        json.dumps(parameters, sort_keys=True, ensure_ascii=False)
+        if isinstance(parameters, Mapping)
+        else "unavailable"
+    )
+    return (
+        "\n".join(
+            [
+                f"- Candidate: `{best.get('candidate', 'unknown')}`",
+                f"- Source method: `{method}`",
+                f"- Metric provenance: `{best.get('metric_provenance', 'unavailable')}`",
+                "- Repeat goodput median (range): "
+                + _aggregate_cell(best, "repeat", "goodput_requests_per_sec"),
+                "- Holdout goodput median (range): "
+                + _aggregate_cell(best, "holdout", "goodput_requests_per_sec"),
+                f"- Parameters: `{parameter_text}`",
+                f"- Conclusion: {conclusion}",
+            ]
+        )
+        + "\n"
+    )
+
+
+def _negative_conditions_markdown(rows: Sequence[Mapping[str, Any]]) -> str:
+    if not rows:
+        return "No negative or no-benefit scheduler conditions were recorded.\n"
+    lines = [
+        "| Trace | Metric | Adaptive | Best fixed | Budget | Relative gain | Explanation |",
+        "|---|---|---:|---:|---:|---:|---|",
+    ]
+    for row in rows:
+        lines.append(
+            "| {trace} | {metric} | {adaptive} | {fixed} | {budget} | {gain} | "
+            "{explanation} |".format(
+                trace=row.get("trace_name", "unknown"),
+                metric=row.get("metric", "unknown"),
+                adaptive=_display(row.get("adaptive_value")),
+                fixed=_display(row.get("fixed_value")),
+                budget=_display(row.get("fixed_budget")),
+                gain=_display(row.get("relative_gain")),
+                explanation=str(row.get("explanation", "unavailable")).replace("|", "\\|"),
+            )
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _trial_records_markdown(rows: Sequence[Mapping[str, Any]]) -> str:
@@ -197,10 +254,17 @@ def _capacity_markdown(rows: Sequence[Mapping[str, Any]]) -> str:
     if not summaries:
         return "Data unavailable; no explicit default-config capacity rates were run.\n"
     lines = [
-        "| Offered req/s | Repeats | Complete | Feasible | Failed | Median achieved (range) | Median goodput (range) |",
-        "|---:|---:|---:|---:|---:|---:|---:|",
+        "| Target offered req/s | Empirical scheduled req/s median (range) | Repeats | Complete | Feasible | Failed | Median achieved (range) | Median goodput (range) |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in summaries:
+        empirical = (
+            f"{_display(row['median_empirical_scheduled_requests_per_sec'])} "
+            f"({_display(row['min_empirical_scheduled_requests_per_sec'])}–"
+            f"{_display(row['max_empirical_scheduled_requests_per_sec'])})"
+            if row["median_empirical_scheduled_requests_per_sec"] is not None
+            else "unavailable"
+        )
         achieved = (
             f"{_display(row['median_achieved_requests_per_sec'])} "
             f"({_display(row['min_achieved_requests_per_sec'])}–"
@@ -216,7 +280,8 @@ def _capacity_markdown(rows: Sequence[Mapping[str, Any]]) -> str:
             else "unavailable"
         )
         lines.append(
-            f"| {_display(row['offered_requests_per_sec'])} | {row['repeat_count']} | "
+            f"| {_display(row['target_offered_requests_per_sec'])} | {empirical} | "
+            f"{row['repeat_count']} | "
             f"{row['complete_count']} | {row['feasible_count']} | {row['failed_count']} | "
             f"{achieved} | {goodput} |"
         )
@@ -328,6 +393,8 @@ def generate_report(
     engine_series: Iterable[Mapping[str, Any]] = (),
     gpu_series: Iterable[Mapping[str, Any]] = (),
     telemetry_source: Optional[str] = None,
+    best: Optional[Mapping[str, Any]] = None,
+    scheduler_negative_conditions: Iterable[Mapping[str, Any]] = (),
 ) -> dict[str, Path]:
     """Generate self-contained Markdown and HTML without inventing unavailable results."""
     destination = Path(output_dir)
@@ -337,6 +404,7 @@ def generate_report(
     holdout_rows = list(holdout)
     validation_rows = list(candidate_validation)
     scheduling_rows = list(scheduler_results)
+    negative_conditions = list(scheduler_negative_conditions)
     capacity_rows = list(capacity_sweep)
     client_rows = list(client_series)
     engine_rows = list(engine_series)
@@ -370,6 +438,8 @@ def generate_report(
     holdout_markdown = _trial_records_markdown(holdout_rows)
     validation_markdown = _validation_markdown(validation_rows)
     capacity_markdown = _capacity_markdown(capacity_rows)
+    best_markdown = _validated_best_markdown(best)
+    negative_markdown = _negative_conditions_markdown(negative_conditions)
 
     markdown = f"""# SLOTune experiment report
 
@@ -393,6 +463,10 @@ the trial artifact directory.
 ## Default vs random vs constrained TPE
 
 {comparison}
+
+## Validated best
+
+{best_markdown}
 
 ## Figures
 
@@ -422,6 +496,10 @@ goodput, fairness, starvation, and preemption; negative deltas are retained.
 
 {scheduler_markdown}
 
+### Negative and no-benefit conditions
+
+{negative_markdown}
+
 ## Telemetry evidence
 
 - Source trial: `{telemetry_source or 'unavailable'}`
@@ -450,7 +528,9 @@ goodput, fairness, starvation, and preemption; negative deltas are retained.
                 "repetitions": repeat_rows,
                 "holdout": holdout_rows,
                 "candidate_validation": validation_rows,
+                "best": dict(best) if isinstance(best, Mapping) else None,
                 "scheduler": scheduling_rows,
+                "scheduler_negative_conditions": negative_conditions,
                 "capacity_sweep": capacity_rows,
             },
             ensure_ascii=False,

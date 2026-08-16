@@ -4,9 +4,10 @@ SLOTune is a single-GPU experiment system for reproducible, SLO-aware vLLM tunin
 for studying adaptive chunked-prefill/token-budget scheduling. It is an AI-infrastructure
 research project—not a chat UI, web control plane, or Kubernetes platform.
 
-> **Evidence status:** the recorded Qwen3-0.6B run is a correctness smoke test only. It is
-> not benchmark evidence. The 3B formal experiment configurations are checked in, but this
-> README does not claim results that have not been measured and preserved as artifacts.
+> **Evidence status:** two completed Qwen2.5-3B-Instruct formal experiments are preserved on
+> the data disk and summarized in the checked-in [result snapshot](docs/results/qwen25-3b-34a25a2.md).
+> The Qwen3-0.6B runs remain correctness smoke tests only. Neither formal workload met the
+> preregistered 15% goodput or 20% p99-TTFT improvement target; that negative result is retained.
 
 ## Fork attribution
 
@@ -25,18 +26,18 @@ collection, baseline runner, and HTML-report foundation.
 
 ### My Contributions
 
-The table distinguishes implementation and automated evidence from performance artifacts. A
-formal artifact remains pending until its immutable result directory is linked; “implemented” is
-not treated as a measured GPU improvement.
+The table distinguishes implementation and automated evidence from measured artifacts. Commit
+links name real local revisions; `34a25a2` is the clean measurement revision, while later
+attestation/documentation commits do not retroactively become measurement provenance.
 
 | Area | SLOTune contribution | Code | Tests | Artifact or evidence | Commit |
 |---|---|---|---|---|---|
-| Benchmark correctness | Streaming SSE framing, typed request records, raw results, and explicit TTFT/TPOT/ITL/E2E/token semantics | [`sse_client.py`](src/vllm_tuner/benchmarks/sse_client.py), [`metrics.py`](src/vllm_tuner/benchmarks/metrics.py), [`vllm_bench.py`](src/vllm_tuner/benchmarks/vllm_bench.py) | [`test_benchmark_sse_client.py`](tests/unit/test_benchmark_sse_client.py), [`test_benchmark_metrics.py`](tests/unit/test_benchmark_metrics.py), [`test_benchmark_vllm_bench.py`](tests/unit/test_benchmark_vllm_bench.py) | [Measurement contract](docs/METHODOLOGY.md#measurement-correctness); formal cross-validation artifact pending | Pending final commit |
-| Reproducibility | Frozen seeded traces, checksums, manifests, environment fingerprints, isolated atomic artifacts, and held-out traces | [`trace.py`](src/vllm_tuner/workloads/trace.py), [`manifest.py`](src/vllm_tuner/experiment/manifest.py), [`artifacts.py`](src/vllm_tuner/experiment/artifacts.py) | [`test_workload_trace.py`](tests/unit/test_workload_trace.py), [`test_experiment_artifacts.py`](tests/unit/test_experiment_artifacts.py) | [Artifact contract](docs/METHODOLOGY.md#artifact-acceptance); [historical smoke boundary](docs/BASELINE_20260815.md) | Pending final commit |
-| Runtime and observability | Trial state machine, structured failure taxonomy, process-group cleanup, aligned Prometheus and continuous NVML sampling | [`controller.py`](src/vllm_tuner/runtime/controller.py), [`session.py`](src/vllm_tuner/profiling/session.py), [`prometheus.py`](src/vllm_tuner/profiling/prometheus.py), [`nvml_session.py`](src/vllm_tuner/profiling/nvml_session.py) | [`test_trial_controller.py`](tests/unit/test_trial_controller.py), [`test_telemetry_session.py`](tests/unit/test_telemetry_session.py), [`test_prometheus.py`](tests/unit/test_prometheus.py), [`test_nvml_session.py`](tests/unit/test_nvml_session.py) | [Lifecycle and telemetry evidence contract](docs/METHODOLOGY.md#trial-lifecycle-and-failures); formal 3B artifact pending | Pending final commit |
-| SLO-aware tuning | Constrained SLO-goodput objective, effective single-GPU search space, equal-budget default/random/TPE, repeats, and holdout validation | [`objective.py`](src/vllm_tuner/tuning/objective.py), [`optimizer.py`](src/vllm_tuner/tuning/optimizer.py), [`runner.py`](src/vllm_tuner/experiment/runner.py) | [`test_objective.py`](tests/unit/test_objective.py), [`test_constrained_optimizer.py`](tests/unit/test_constrained_optimizer.py), [`test_experiment_runner.py`](tests/unit/test_experiment_runner.py) | [Formal protocol](docs/FORMAL_EXPERIMENTS.md); formal 3B artifact pending | Pending final commit |
-| Scheduling experiments | Deterministic fixed/adaptive token-budget simulator with budget conservation, aging, max-wait, admission limits, fairness, starvation, preemption, and downside retention | [`token_budget.py`](src/vllm_tuner/scheduling/token_budget.py), [`admission.py`](src/vllm_tuner/scheduling/admission.py), [`simulator.py`](src/vllm_tuner/scheduling/simulator.py), [`run_scheduler_ablation.py`](scripts/run_scheduler_ablation.py) | [`test_scheduling_token_budget.py`](tests/unit/test_scheduling_token_budget.py), [`test_scheduling_admission.py`](tests/unit/test_scheduling_admission.py), [`test_scheduling_simulator.py`](tests/unit/test_scheduling_simulator.py), [`test_scheduling_script.py`](tests/unit/test_scheduling_script.py) | [Simulator evidence boundary](docs/METHODOLOGY.md#adaptive-token-budget-simulator); generated JSON/Markdown are local artifacts, not GPU results | Pending final commit |
-| Reporting | Static JSON/Markdown/HTML summaries and plots that preserve infeasible, failed, missing, and negative outcomes | [`report.py`](src/vllm_tuner/reporting/report.py), [`plots.py`](src/vllm_tuner/reporting/plots.py) | [`test_reporting_artifacts.py`](tests/unit/test_reporting_artifacts.py) | [Reporting checklist](docs/FORMAL_EXPERIMENTS.md#reporting-checklist); formal report pending | Pending final commit |
+| Benchmark correctness | Streaming SSE framing, typed request records, raw results, and explicit TTFT/TPOT/ITL/E2E/token semantics | [`sse_client.py`](src/vllm_tuner/benchmarks/sse_client.py), [`metrics.py`](src/vllm_tuner/benchmarks/metrics.py), [`vllm_bench.py`](src/vllm_tuner/benchmarks/vllm_bench.py) | [`test_benchmark_sse_client.py`](tests/unit/test_benchmark_sse_client.py), [`test_benchmark_metrics.py`](tests/unit/test_benchmark_metrics.py), [`test_benchmark_vllm_bench.py`](tests/unit/test_benchmark_vllm_bench.py) | [Measurement contract](docs/METHODOLOGY.md#measurement-correctness); live official/SSE comparison recorded in the [result snapshot](docs/results/qwen25-3b-34a25a2.md#official-vs-sse-cross-check) | [`aa9d70a`](docs/FORMAL_EXPERIMENTS.md#implementation-revisions) |
+| Reproducibility | Frozen seeded traces, checksums, manifests, environment fingerprints, isolated atomic artifacts, held-out traces, and integrity validation | [`trace.py`](src/vllm_tuner/workloads/trace.py), [`manifest.py`](src/vllm_tuner/experiment/manifest.py), [`artifacts.py`](src/vllm_tuner/experiment/artifacts.py) | [`test_workload_trace.py`](tests/unit/test_workload_trace.py), [`test_experiment_artifacts.py`](tests/unit/test_experiment_artifacts.py) | [Artifact contract](docs/METHODOLOGY.md#artifact-acceptance); [formal evidence snapshot](docs/results/qwen25-3b-34a25a2.md#artifact-audit) | [`aa9d70a`](docs/FORMAL_EXPERIMENTS.md#implementation-revisions), [`0d605c3`](docs/FORMAL_EXPERIMENTS.md#implementation-revisions), [`34a25a2`](docs/FORMAL_EXPERIMENTS.md#implementation-revisions) |
+| Runtime and observability | Trial state machine, structured failure taxonomy, process-group cleanup, aligned Prometheus and continuous NVML sampling | [`controller.py`](src/vllm_tuner/runtime/controller.py), [`session.py`](src/vllm_tuner/profiling/session.py), [`prometheus.py`](src/vllm_tuner/profiling/prometheus.py), [`nvml_session.py`](src/vllm_tuner/profiling/nvml_session.py) | [`test_trial_controller.py`](tests/unit/test_trial_controller.py), [`test_telemetry_session.py`](tests/unit/test_telemetry_session.py), [`test_prometheus.py`](tests/unit/test_prometheus.py), [`test_nvml_session.py`](tests/unit/test_nvml_session.py) | Both formal roots contain aligned engine/GPU series and cleanup evidence for all 96 trials | [`aa9d70a`](docs/FORMAL_EXPERIMENTS.md#implementation-revisions) |
+| SLO-aware tuning | Constrained SLO-goodput objective, effective single-GPU search space, equal-budget default/random/TPE, repeats, and holdout validation | [`objective.py`](src/vllm_tuner/tuning/objective.py), [`optimizer.py`](src/vllm_tuner/tuning/optimizer.py), [`runner.py`](src/vllm_tuner/experiment/runner.py) | [`test_objective.py`](tests/unit/test_objective.py), [`test_constrained_optimizer.py`](tests/unit/test_constrained_optimizer.py), [`test_experiment_runner.py`](tests/unit/test_experiment_runner.py) | [Formal result tables](docs/results/qwen25-3b-34a25a2.md#tuning-outcome): repeated and held-out negative results for Chat and RAG | [`aa9d70a`](docs/FORMAL_EXPERIMENTS.md#implementation-revisions), [`34a25a2`](docs/FORMAL_EXPERIMENTS.md#implementation-revisions) |
+| Scheduling experiments | Deterministic fixed/adaptive token-budget simulator with budget conservation, aging, max-wait, admission limits, fairness, starvation, preemption, and downside retention | [`token_budget.py`](src/vllm_tuner/scheduling/token_budget.py), [`admission.py`](src/vllm_tuner/scheduling/admission.py), [`simulator.py`](src/vllm_tuner/scheduling/simulator.py), [`run_scheduler_ablation.py`](scripts/run_scheduler_ablation.py) | [`test_scheduling_token_budget.py`](tests/unit/test_scheduling_token_budget.py), [`test_scheduling_admission.py`](tests/unit/test_scheduling_admission.py), [`test_scheduling_simulator.py`](tests/unit/test_scheduling_simulator.py), [`test_scheduling_script.py`](tests/unit/test_scheduling_script.py) | [Recorded no-gain/regression result](docs/results/qwen25-3b-34a25a2.md#scheduler-simulator-negative-result); explicitly CPU simulator evidence | [`aa9d70a`](docs/FORMAL_EXPERIMENTS.md#implementation-revisions) |
+| Reporting | Static JSON/Markdown/HTML summaries and plots that preserve infeasible, failed, missing, and negative outcomes | [`report.py`](src/vllm_tuner/reporting/report.py), [`plots.py`](src/vllm_tuner/reporting/plots.py) | [`test_reporting_artifacts.py`](tests/unit/test_reporting_artifacts.py) | [Formal reports and checked-in evidence snapshot](docs/results/qwen25-3b-34a25a2.md) | [`aa9d70a`](docs/FORMAL_EXPERIMENTS.md#implementation-revisions), [`b8f2dc1`](docs/FORMAL_EXPERIMENTS.md#implementation-revisions) |
 
 The upstream foundation remains credited above; in particular, this fork does not claim the
 original Typer CLI, Pydantic configuration, Optuna skeleton, vLLM launcher, or HTML-report base
@@ -58,15 +59,21 @@ SLOTune is designed to answer:
 | Evidence | Model and workload | Recorded outcome | What it supports |
 |---|---|---|---|
 | [Frozen bring-up artifact](docs/BASELINE_20260815.md) | Qwen3-0.6B, two local prompts | 2/2 requests completed; no recorded request error or OOM | Historical end-to-end smoke only |
-| Current-format local smoke (`/root/autodl-tmp/slotune-results/smoke-20260815-b`) | Qwen3-0.6B, two-request trace | Current artifact layout completed a default evaluation and one repeat | Current pipeline wiring only |
+| Current-format local smoke (`/root/autodl-tmp/vllm-tuner-output/slotune-results/smoke-34a25a2-20260816`) | Qwen3-0.6B, two-request trace | Default plus repeat completed; source tree clean; trial integrity and cleanup validated | Current pipeline wiring only |
 | Local 3B preflight (`/root/autodl-tmp/slotune-results/qwen25-3b-preflight-20260815-a`) | Qwen2.5-3B-Instruct, two-request trace | Default evaluation and one repeat completed; no capacity sweep or held-out result | 3B model/pipeline preflight only |
-| Qwen2.5-3B chat formal run | Not yet recorded | **Pending an immutable artifact** | No performance claim yet |
-| Qwen2.5-3B RAG formal run | Not yet recorded | **Pending an immutable artifact** | No performance claim yet |
+| [Qwen2.5-3B Chat formal run](docs/results/qwen25-3b-34a25a2.md#chat) | RTX 5090; 500 × 128-token synthetic Chat; 48 search + 15 repeat + 15 holdout + 18 capacity trials | 89 COMPLETE, 7 constraint-INFEASIBLE, 0 request failures; TPE-11 repeat goodput 7.948 req/s versus default 7.948; all tested capacity points feasible, so capacity is only a ≥27.883 req/s lower bound | Complete repeated/holdout/capacity evidence; no significant tuning gain |
+| [Qwen2.5-3B RAG formal run](docs/results/qwen25-3b-34a25a2.md#rag) | RTX 5090; 500 × 128-token synthetic RAG; same 96-trial protocol | 89 COMPLETE, 7 constraint-INFEASIBLE, 0 request failures; default remains best; observed knee near nominal 16 req/s and two 32 req/s repeats violate TTFT SLO | Complete repeated/holdout/capacity evidence; negative tuning result |
 
-This table is the update point for real 3B results. Replace a pending row only after linking its
-experiment directory or archived report and recording the repository revision, environment,
-trace checksum, repeats, held-out outcome, and failures. The checked-in configs and passing unit
-tests prove protocol and implementation properties; they are not benchmark measurements.
+Both formal runs were measured from clean commit
+`34a25a2e10951bfab1c2a86b4c60aff5bef785df`; the result snapshot records the environment, trace
+hashes, target versus empirical arrival rates, repeat ranges, constraints, and artifact audit.
+The configs and tests remain protocol evidence; only the linked formal artifacts support these
+measurements.
+
+![RAG default capacity curve](docs/results/rag-capacity.png)
+
+The graph is a checked-in copy of the formal artifact's generated capacity plot. The source
+artifact and exact table are identified in the [result snapshot](docs/results/qwen25-3b-34a25a2.md#capacity).
 
 ## Correct objective and metrics
 
@@ -195,6 +202,16 @@ This runs the deterministic calibration/held-out scheduler ablation; it does not
 The explicit output directory receives `scheduler_ablation.json` and
 `scheduler_ablation.md`. The script refuses accidental overwrite.
 
+For the three-to-five-minute walkthrough, pass a completed formal artifact as the optional second
+argument. After the CPU simulation finishes, the script checks and prints the pre-generated
+report paths, so it never waits for a formal GPU run:
+
+```bash
+./scripts/run_demo.sh \
+  /root/autodl-tmp/slotune-demo/scheduler-demo \
+  /root/autodl-tmp/slotune-results/qwen25-3b-rag-formal-34a25a2
+```
+
 ### One-command GPU smoke
 
 After installation and local model preparation:
@@ -299,10 +316,12 @@ These are expected negative/no-benefit conditions to preserve and explain, not r
 - [`docs/BASELINE_20260815.md`](docs/BASELINE_20260815.md): frozen Qwen3-0.6B bring-up
   evidence, clearly scoped as smoke only.
 - [`config/formal_3b_chat.yaml`](config/formal_3b_chat.yaml) and
-  [`config/formal_3b_rag.yaml`](config/formal_3b_rag.yaml): formal protocols ready to run;
-  no performance result is claimed here.
-- Scheduler unit tests and `scripts/run_scheduler_ablation.py`: deterministic mechanism and
-  fairness checks, not GPU measurements.
+  [`config/formal_3b_rag.yaml`](config/formal_3b_rag.yaml): the exact formal protocols used at
+  measurement commit `34a25a2`.
+- [`docs/results/qwen25-3b-34a25a2.md`](docs/results/qwen25-3b-34a25a2.md): checked-in evidence
+  snapshot for both external data-disk artifact roots, including negative results and plot copies.
+- Scheduler unit tests and `scripts/run_scheduler_ablation.py`: deterministic CPU mechanism and
+  fairness checks. The recorded 0% goodput gain and TTFT regressions are not GPU runtime claims.
 
 ## Limitations and future work
 
@@ -314,14 +333,15 @@ These are expected negative/no-benefit conditions to preserve and explain, not r
 - Formal configurations use the SSE client to replay frozen arrival offsets exactly. Official
   `vllm bench serve` is retained as a live reference/cross-validation backend.
 - Energy per output token depends on available NVML power samples.
-- Planned work includes 7B/8B capacity sweeps, runtime scheduler integration pinned to an exact
-  vLLM commit, prefix-caching experiments, repeated confidence intervals, and broader held-out
-  request rates.
+- Planned work includes 7B/8B validation, runtime scheduler integration pinned to an exact vLLM
+  commit, repeated confidence intervals, and broader held-out request rates. M6 prefix-caching
+  experiments are explicitly deferred P1 work and do not block the core Definition of Done.
 
 ## Documentation and license
 
 - [Documentation index](docs/README.md)
 - [Methodology](docs/METHODOLOGY.md)
+- [Engineering development log](docs/DEVELOPMENT_LOG.md)
 - [Formal experiment protocol](docs/FORMAL_EXPERIMENTS.md)
 - [Project-plan audit](docs/PLAN_AUDIT.md)
 - [Reproduction guide](REPRODUCTION.md)

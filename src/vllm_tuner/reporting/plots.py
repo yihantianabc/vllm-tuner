@@ -71,12 +71,13 @@ def figure_unavailable_reason(figure: go.Figure) -> Optional[str]:
 
 
 def capacity_curve(rows: Iterable[Mapping[str, Any]]) -> go.Figure:
-    """Plot default-config capacity medians/ranges across explicit rate repeats."""
+    """Plot capacity medians/ranges against explicit target offered rates."""
     data = summarize_capacity_rows(rows)
 
     figure = go.Figure()
     measured_points = 0
     for field, label in (
+        ("empirical_scheduled_requests_per_sec", "Empirical scheduled rate"),
         ("achieved_requests_per_sec", "Achieved throughput"),
         ("goodput_requests_per_sec", "SLO goodput"),
     ):
@@ -91,7 +92,7 @@ def capacity_curve(rows: Iterable[Mapping[str, Any]]) -> go.Figure:
         assert all(value is not None for value in medians)
         figure.add_trace(
             go.Scatter(
-                x=[row["offered_requests_per_sec"] for row in points],
+                x=[row["target_offered_requests_per_sec"] for row in points],
                 y=medians,
                 mode="lines+markers",
                 name=f"{label} median",
@@ -106,25 +107,25 @@ def capacity_curve(rows: Iterable[Mapping[str, Any]]) -> go.Figure:
                 },
                 customdata=[row["repeat_count"] for row in points],
                 hovertemplate=(
-                    "Offered=%{x:.3f}<br>Median=%{y:.3f}<br>Repeats=%{customdata}" "<extra></extra>"
+                    "Target=%{x:.3f}<br>Median=%{y:.3f}<br>Repeats=%{customdata}" "<extra></extra>"
                 ),
             )
         )
 
-    offered_values = [row["offered_requests_per_sec"] for row in data]
-    if offered_values:
+    target_values = [row["target_offered_requests_per_sec"] for row in data]
+    if target_values:
         figure.add_trace(
             go.Scatter(
-                x=offered_values,
-                y=offered_values,
+                x=target_values,
+                y=target_values,
                 mode="lines",
                 line={"dash": "dot", "color": "#777"},
-                name="Offered load",
+                name="Target offered load",
             )
         )
     figure.update_layout(
         title="Default vLLM capacity sweep (median and range across repeats)",
-        xaxis_title="Offered requests/s",
+        xaxis_title="Target offered requests/s",
         yaxis_title="Requests/s",
         template="plotly_white",
     )
@@ -139,17 +140,22 @@ def capacity_curve(rows: Iterable[Mapping[str, Any]]) -> go.Figure:
 def summarize_capacity_rows(
     rows: Iterable[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Aggregate capacity repeats by offered rate while retaining failures."""
+    """Aggregate capacity repeats by target rate while retaining failures."""
     grouped: dict[float, list[Mapping[str, Any]]] = {}
     for row in rows:
-        offered = _number(row.get("offered_requests_per_sec"))
-        if offered is not None:
-            grouped.setdefault(offered, []).append(row)
+        target = _number(row.get("target_offered_requests_per_sec"))
+        if target is None:
+            # Read pre-v5 rows without confusing their target-valued alias for empirical load.
+            target = _number(row.get("offered_requests_per_sec"))
+        if target is not None:
+            grouped.setdefault(target, []).append(row)
 
     summaries: list[dict[str, Any]] = []
-    for offered, values in sorted(grouped.items()):
+    for target, values in sorted(grouped.items()):
         summary: dict[str, Any] = {
-            "offered_requests_per_sec": offered,
+            # Preserve the established summary key as a target-valued compatibility alias.
+            "offered_requests_per_sec": target,
+            "target_offered_requests_per_sec": target,
             "repeat_count": len(values),
             "complete_count": sum(row.get("status") == "COMPLETE" for row in values),
             "feasible_count": sum(bool(row.get("feasible", False)) for row in values),
@@ -158,6 +164,7 @@ def summarize_capacity_rows(
         measured_values = [row for row in values if row.get("status") in {"COMPLETE", "INFEASIBLE"}]
         summary["measured_count"] = len(measured_values)
         for field in (
+            "empirical_scheduled_requests_per_sec",
             "achieved_requests_per_sec",
             "goodput_requests_per_sec",
             "request_throughput",
