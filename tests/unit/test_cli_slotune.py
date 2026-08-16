@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import yaml
 from click.utils import strip_ansi
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from vllm_tuner.cli.main import app
@@ -558,10 +559,17 @@ def test_tune_help_exposes_manifest_validated_resume() -> None:
     result = runner.invoke(app, ["tune", "--help"])
 
     assert result.exit_code == 0, result.output
-    help_output = " ".join(strip_ansi(result.output).split())
+    help_output = strip_ansi(result.output)
     assert "--resume" in help_output
-    assert "immutable" in help_output
-    assert "manifest" in help_output
     assert "--allow-dirty-source" in help_output
-    assert "formal runs" in help_output
-    assert "require clean Git" in help_output
+
+    tune_command = get_command(app).commands["tune"]
+    options = {parameter.name: parameter for parameter in tune_command.params}
+    resume_option = options["resume"]
+    dirty_source_option = options["allow_dirty_source"]
+    assert "--resume" in resume_option.opts
+    assert "immutable" in resume_option.help
+    assert "manifest" in resume_option.help
+    assert "--allow-dirty-source" in dirty_source_option.opts
+    assert "formal runs" in dirty_source_option.help
+    assert "require clean Git" in dirty_source_option.help

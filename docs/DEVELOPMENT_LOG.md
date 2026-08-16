@@ -587,13 +587,15 @@ fixed budget，adaptive p99 TTFT 为：
   `tune --help` 的 exit code 为 0，但 Actions 环境中的 Rich/Typer 输出包含 ANSI 样式码并
   受终端宽度换行；测试用原始字符串查找 `--resume` 时失败，本机无颜色的 `CliRunner` 输出
   没有复现。第一次只剥离 ANSI 后，run `31926290503` 已通过前五个断言，但说明短语
-  `require clean Git` 仍因跨行空白而失败，证明不能只处理颜色。
+  `require clean Git` 仍因跨行空白而失败。第二次折叠空白后，run `31926521786` 仍在同一
+  短语失败，说明 GitHub runner 的 Rich 表格会为列宽直接省略帮助尾部，而非只插入空白。
 - **影响**：业务 CLI 选项实际存在且帮助命令成功，失败属于跨环境测试表示差异；Release run
   `31925921228` 也在测试步骤失败，因此 semantic-release 被正确跳过，没有产生额外 tag 或
   version commit。
-- **修复**：测试先用 Click 的 `strip_ansi()` 去除样式，再用 `split()`/`join()` 折叠布局空白，
-  最后验证 `--resume`、`--allow-dirty-source` 及其不可变 manifest/clean-source 说明。
-  生产 CLI 不改。
+- **修复**：渲染输出只验证 `--resume` 和 `--allow-dirty-source` 真实显示；精确说明则从
+  `typer.main.get_command(app)` 生成的 Click option metadata 读取，验证不可变
+  manifest/clean-source 合同。该断言不再依赖 ANSI、终端宽度、Rich 省略策略或平台；生产
+  CLI 不改。
 - **回归**：定向测试同时验证 exit code 和去样式后的完整选项合同；随后重新运行全量测试和
   GitHub 3.10/3.11/3.12 matrix。该修复不会改变 `34a25a2` 正式测量或 `ad36ee8` attestation。
 
