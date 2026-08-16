@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import yaml
+from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from vllm_tuner.cli.main import app
@@ -557,9 +558,10 @@ def test_tune_help_exposes_manifest_validated_resume() -> None:
     result = runner.invoke(app, ["tune", "--help"])
 
     assert result.exit_code == 0, result.output
-    assert "--resume" in result.output
-    assert "immutable" in result.output
-    assert "manifest" in result.output
-    assert "--allow-dirty-source" in result.output
-    assert "formal runs" in result.output
-    assert "require clean Git" in result.output
+    help_output = strip_ansi(result.output)
+    assert "--resume" in help_output
+    assert "immutable" in help_output
+    assert "manifest" in help_output
+    assert "--allow-dirty-source" in help_output
+    assert "formal runs" in help_output
+    assert "require clean Git" in help_output
