@@ -1,6 +1,7 @@
 """Contract tests for SLOTune documentation and checked-in YAML examples."""
 
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -176,13 +177,14 @@ def test_reproduction_environment_is_locked_and_inherited_by_formal_commands() -
     assert 'source "${SCRIPT_DIR}/data_disk_reproduction_env.sh"' in wrapper
     assert 'CLI="${SLOTUNE_REPO_DIR}/.venv/bin/vllm-tuner"' in wrapper
     assert 'exec "${CLI}" "$@"' in wrapper
-    for script in (
-        "data_disk_reproduction_env.sh",
-        "setup_data_disk_reproduction.sh",
-        "run_data_disk_reproduction.sh",
-        "run_reproduction_command.sh",
-    ):
-        subprocess.run(["bash", "-n", str(REPOSITORY / "scripts" / script)], check=True)
+    if sys.platform != "win32":
+        for script in (
+            "data_disk_reproduction_env.sh",
+            "setup_data_disk_reproduction.sh",
+            "run_data_disk_reproduction.sh",
+            "run_reproduction_command.sh",
+        ):
+            subprocess.run(["bash", "-n", str(REPOSITORY / "scripts" / script)], check=True)
 
 
 def test_ci_python_matrices_match_the_declared_package_floor() -> None:
@@ -225,7 +227,8 @@ def test_demo_script_has_valid_shell_syntax_and_explicit_output_contract() -> No
     """The short demo is runnable and never chooses an implicit artifact path."""
 
     script = REPOSITORY / "scripts/run_demo.sh"
-    subprocess.run(["bash", "-n", str(script)], check=True)
+    if sys.platform != "win32":
+        subprocess.run(["bash", "-n", str(script)], check=True)
     contents = script.read_text(encoding="utf-8")
     assert "[[ $# -lt 1 || $# -gt 2 ]]" in contents
     assert 'OUTPUT_DIR="$1"' in contents
