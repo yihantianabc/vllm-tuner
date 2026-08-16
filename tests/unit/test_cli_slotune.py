@@ -393,7 +393,7 @@ def test_report_markdown_uses_slotune_metrics_and_validation(tmp_path: Path) -> 
         ],
     )
     assert result.exit_code == 0, result.output
-    markdown = markdown_path.read_text()
+    markdown = markdown_path.read_text(encoding="utf-8")
     assert "# SLOTune experiment: exp" in markdown
     assert "SLO goodput, repeat median (range): `3.500 (3.400–3.600; n=3)`" in markdown
     assert "Search SLO goodput (selection observation only): `9.900`" in markdown

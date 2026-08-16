@@ -172,10 +172,11 @@ def test_report_records_html_fallback_when_static_renderer_is_missing(
         assert "kaleido is not installed" in record["fallback_reason"]
     assert plot_manifest["plots"]["capacity_curve"]["data_available"] is True
     assert plot_manifest["plots"]["telemetry_timeline"]["data_available"] is False
-    assert "interactive HTML fallback" in paths["markdown"].read_text()
-    assert "Holdout trace SHA-256: `holdout`" in paths["markdown"].read_text()
-    assert "Target offered req/s | Empirical scheduled req/s" in paths["markdown"].read_text()
-    assert "| 2.000 | 2.250 (2.250–2.250) |" in paths["markdown"].read_text()
+    markdown = paths["markdown"].read_text(encoding="utf-8")
+    assert "interactive HTML fallback" in markdown
+    assert "Holdout trace SHA-256: `holdout`" in markdown
+    assert "Target offered req/s | Empirical scheduled req/s" in markdown
+    assert "| 2.000 | 2.250 (2.250–2.250) |" in markdown
 
 
 def test_report_renders_validated_default_negative_conditions_and_preemptions(
@@ -238,13 +239,13 @@ def test_report_renders_validated_default_negative_conditions_and_preemptions(
         scheduler_negative_conditions=[condition],
     )
 
-    markdown = paths["markdown"].read_text()
+    markdown = paths["markdown"].read_text(encoding="utf-8")
     assert "## Validated best" in markdown
     assert "validated default configuration remained best" in markdown
     assert "no tuning improvement is claimed" in markdown
     assert "| Starvation | Preemptions |" in markdown
     assert "| 1 | 3 |" in markdown
     assert condition["explanation"] in markdown
-    html_text = paths["html"].read_text()
+    html_text = paths["html"].read_text(encoding="utf-8")
     assert "scheduler_negative_conditions" in html_text
     assert "Adaptive overhead regressed held-out TTFT." in html.unescape(html_text)

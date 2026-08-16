@@ -288,7 +288,7 @@ async def test_experiment_runner_writes_search_repeat_and_report(tmp_path, monke
     assert repeat_summary["phase"] == "repeat"
     assert repeat_summary["source_method"] == "default"
     assert repeat_summary["source_trial_id"] == "default-0000"
-    report_markdown = (runner.artifacts.report_dir / "report.md").read_text()
+    report_markdown = (runner.artifacts.report_dir / "report.md").read_text(encoding="utf-8")
     assert "validated default configuration remained best" in report_markdown
 
 
