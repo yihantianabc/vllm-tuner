@@ -16,11 +16,12 @@ the completed Qwen2.5-3B formal measurements made from clean commit
 | Smoke/preflight only | A small local artifact exercises the path but cannot support performance claims |
 | Deferred | Optional P1, runtime-integration, or explicitly out-of-scope work |
 
-The README contribution table links real local revisions `aa9d70a`, `0d605c3`, `b8f2dc1`, and
-`34a25a2` through the repository's
-[implementation-revisions register](FORMAL_EXPERIMENTS.md#implementation-revisions). It does not
-invent upstream GitHub links. The later attestation/documentation revision is not substituted for
-the measurement commit.
+The README contribution table links real commits in the authorized public GitHub fork:
+`aa9d70a`, `0d605c3`, `b8f2dc1`, `34a25a2`, and `ad36ee8`. The repository's
+[implementation-revisions register](FORMAL_EXPERIMENTS.md#implementation-revisions) separately
+maps each revision to its role and evidence boundary; these fork links do not claim that the
+commits originated in the upstream repository. The later attestation/documentation revision is
+not substituted for the measurement commit.
 
 ## Complete plan-section coverage
 
@@ -47,7 +48,7 @@ the measurement commit.
 
 | Milestone | Implementation and test evidence | Experimental evidence | Remaining boundary |
 |---|---|---|---|
-| M0: frozen baseline | [Baseline record](BASELINE_20260815.md), [data-disk setup](../scripts/setup_data_disk_reproduction.sh), [one-command smoke](../scripts/run_data_disk_reproduction.sh), and documentation tests | Historical 0.6B bring-up remains smoke; final smoke `smoke-34a25a2-20260816` validates the current pipeline; formal manifests record clean commit `34a25a2` | Smoke remains excluded from performance conclusions |
+| M0: frozen baseline | [Baseline record](BASELINE_20260815.md), [data-disk setup](../scripts/setup_data_disk_reproduction.sh), [one-command smoke](../scripts/run_data_disk_reproduction.sh), and documentation tests | Historical 0.6B bring-up remains smoke; final `smoke-ad36ee8-20260816` has two COMPLETE/selectable trials and 37 sealed entries including two anchors; formal measurements remain at clean commit `34a25a2` | Smoke remains excluded from performance conclusions |
 | M1: trustworthy benchmark | [SSE client](../src/vllm_tuner/benchmarks/sse_client.py), [official adapter](../src/vllm_tuner/benchmarks/vllm_bench.py), [result parser](../src/vllm_tuner/benchmarks/result_parser.py), [metric reducer](../src/vllm_tuner/benchmarks/metrics.py), fixtures, and tests | `cross-validation-34a25a2-20260816` matches completed/failed and input/output token totals and validates SSE token timestamps | Sequential backend latencies are a sanity check, not equality evidence |
 | M2: cross-layer telemetry | [Telemetry session](../src/vllm_tuner/profiling/session.py), [Prometheus](../src/vllm_tuner/profiling/prometheus.py), [continuous NVML](../src/vllm_tuner/profiling/nvml_session.py), [reducer](../src/vllm_tuner/profiling/timeseries.py), and tests | Both 96-trial formal roots preserve aligned engine/GPU series, availability, power/energy, and generated timelines | Causal conclusions remain limited to aligned observations |
 | M3: reliable trial lifecycle | [State machine](../src/vllm_tuner/runtime/state_machine.py), [controller](../src/vllm_tuner/runtime/controller.py), [server lifecycle](../src/vllm_tuner/runtime/server.py), [failure taxonomy](../src/vllm_tuner/runtime/failures.py), and tests | Cleanup validated for all 192 formal trial directories; no residual GPU process, forced SIGKILL, or request-failure misclassification | Exhaustive GPU fault injection for every taxonomy member is not a performance requirement |
@@ -140,19 +141,21 @@ tested point was feasible; RAG identifies a knee and constraint boundary. No unm
 [`ArtifactStore`](../src/vllm_tuner/experiment/artifacts.py) implements manifest/config,
 search/holdout traces and hashes, environment fingerprint, per-trial requests/telemetry/logs,
 structured status, aggregate tables, scheduler ablation, plots, and reports. Per-trial integrity
-validated 96/96 directories in each workload. The reviewed additive post-run attestation path is
-designed to index those anchors and hash non-trial aggregate/report/environment files without
-rewriting sealed formal trials; it must be executed only after its implementation revision is
-committed. Each workload has 89 COMPLETE and seven constraint-INFEASIBLE outcomes, with all
-48,000 measured requests successful.
+validated 96/96 directories in each workload. Clean tool revision `ad36ee8` materialized the
+additive post-run attestation for both roots without rewriting sealed formal trials. Each seal
+covers 143 entries in total, including 96 trial anchors; semantic validation passed 96/96 trials, including
+89 COMPLETE, seven constraint-INFEASIBLE, 96 legacy-provenance rows, 30 derived
+repeat/holdout-lineage rows, and six scheduler negative conditions per workload. All 48,000
+measured requests per workload succeeded.
 
-The attestation contract emits root `experiment-integrity.json`, `lineage.json`, and
+The materialized attestation emits root `experiment-integrity.json`, `lineage.json`, and
 `experiment-audit.json`, plus `aggregate/scheduler-negative-results.json` and
 `report/scheduler-negative-results.md`. Additive `summary.compact-v1.json` preserves other root
 summary fields while replacing inline scheduler raw rows with compact metrics and a reference to
 the unchanged raw artifact by path, size, and SHA-256; the original `summary.json` is preserved
 byte-for-byte. `vllm-tuner attest` validates an existing seal idempotently; explicit `--reseal`
-validates the old seal before rebuilding and rejects corruption.
+validates the old seal before rebuilding and rejects corruption. A repeated ordinary `attest`
+validated both roots idempotently without changing either seal.
 
 The external roots are:
 

@@ -26,6 +26,12 @@ scheduler negative-result views. Rebuilding requires explicit `--reseal`, which 
 seal first and rejects corrupt evidence. The compact reference is the additive
 `summary.compact-v1.json` sidecar; it does not replace the original root `summary.json`.
 
+Both recorded formal roots have now been attested with clean tool revision `ad36ee8`. Each
+materialized seal covers 143 entries in total, including 96 trial-integrity anchors, and a repeated ordinary
+`attest` validated the existing seal without changing it. Measurement provenance remains clean
+`34a25a2`; the exact timestamps, seal hashes, and original-file hashes are in the
+[artifact audit](results/qwen25-3b-34a25a2.md#artifact-audit).
+
 ## Hardware and software scope
 
 The templates assume:
@@ -212,3 +218,4 @@ rather than implying that unpublished commits exist in the upstream GitHub repos
 | `0d605c3` | Pinned reproducible data-disk GPU environment |
 | `b8f2dc1` | Methodology and formal protocol publication |
 | `34a25a2` | Disabled-holdout smoke compatibility; clean revision used for all final measurements |
+| `ad36ee8` | Root attestation, lineage, compact sidecar, capacity semantics, and explicit negative-result views |

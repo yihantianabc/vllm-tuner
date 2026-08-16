@@ -16,7 +16,7 @@ for those GPU measurements, and the scheduler simulation is never presented as a
 | Tier | Model | Status | Permitted claim |
 |---|---|---|---|
 | Legacy bring-up | Qwen3-0.6B | Preserved as `reproduction_gpu_20260815_a` | The pre-refactor chain completed two requests |
-| Current smoke | Qwen3-0.6B | Current-format `smoke-20260815-b` exists; each new run still needs its own artifact | Model load, SSE requests, telemetry, cleanup, and artifact wiring |
+| Current smoke | Qwen3-0.6B | `smoke-ad36ee8-20260816`: two COMPLETE/selectable trials and 37 sealed entries including two trial anchors | Model load, SSE requests, telemetry, cleanup, and fresh attestation wiring |
 | Current 3B preflight | Qwen2.5-3B-Instruct | `qwen25-3b-preflight-20260815-a` completed a two-request default run and one repeat | 3B model and current pipeline wiring only |
 | Formal Chat | Qwen2.5-3B-Instruct | 96-trial result at `qwen25-3b-chat-formal-34a25a2` | Repeated/held-out/capacity result; no significant tuning gain |
 | Formal RAG | Qwen2.5-3B-Instruct | 96-trial result at `qwen25-3b-rag-formal-34a25a2` | Default remains best; capacity knee near nominal 16 req/s |
@@ -205,6 +205,16 @@ refuses corrupted evidence. The seal records measurement versus attestation prov
 `lineage.json`, `experiment-audit.json`, the additive `summary.compact-v1.json` sidecar,
 scheduler negative-result views, non-trial evidence, and all per-trial integrity anchors. The
 original root `summary.json` and raw `aggregate/scheduler-ablation.json` remain byte-identical.
+
+The two reference roots were attested with clean tool commit
+`ad36ee8e0e15a6d0502a35f9e794b056b9522a82` and source-tree SHA-256
+`8ea95533232bf6b0d45b75513ec4c799f3ab42595fb66abd5e9893142fbfae7a`. Chat was sealed at
+`2026-08-16T03:39:22.962525+00:00` with `experiment-integrity.json` SHA-256
+`7d704beea1890d14f7a411d677b867cdc8a06584a5040dbde2793f6723c8e191`; RAG was sealed at
+`2026-08-16T03:40:07.786811+00:00` with SHA-256
+`7df0229c115ec0ce41cbc3c72624b13597b2a33d8f93a762242dbe723ca498b7`. Each seal covers 143
+entries in total, including 96 trial anchors. Repeating both commands validated the seals idempotently without
+changing them.
 
 ## 5. Run the deterministic scheduler ablation
 

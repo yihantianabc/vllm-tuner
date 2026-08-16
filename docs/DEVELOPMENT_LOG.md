@@ -22,10 +22,11 @@
 | 可复现环境 | `0d605c3` |
 | 方法与协议文档 | `b8f2dc1` |
 | smoke 兼容修复/测量提交 | `34a25a2` |
+| post-run attestation 工具 | clean commit `ad36ee8e0e15a6d0502a35f9e794b056b9522a82`；tree SHA-256 `8ea95533232bf6b0d45b75513ec4c799f3ab42595fb66abd5e9893142fbfae7a` |
 | Chat formal root | `/root/autodl-tmp/slotune-results/qwen25-3b-chat-formal-34a25a2` |
 | RAG formal root | `/root/autodl-tmp/slotune-results/qwen25-3b-rag-formal-34a25a2` |
 | official/SSE cross-check | `/root/autodl-tmp/slotune-results/cross-validation-34a25a2-20260816` |
-| 当前格式 smoke | `/root/autodl-tmp/vllm-tuner-output/slotune-results/smoke-34a25a2-20260816` |
+| 当前格式 smoke | `/root/autodl-tmp/vllm-tuner-output/slotune-results/smoke-ad36ee8-20260816` |
 | formal supervisor log | `/root/autodl-tmp/slotune-results/formal-suite-34a25a2.log` |
 
 模型权重 SHA-256 为
@@ -49,7 +50,10 @@ SLO 和 seeded traces。
 | 2026-08-15 22:30:15Z | RAG 96-trial formal run 完成 | RAG root、log 完成段；22:30:16Z 开始 Chat |
 | 2026-08-16 02:07:25Z | Chat formal run 和整个 suite 完成 | `FORMAL_SUITE_COMPLETE` |
 | 2026-08-16 | 对 Chat/RAG 做 trial、raw request、telemetry、cleanup、Parquet、report、hash 全量只读审计 | 两个 workload 均 96/96 trial integrity/semantic/cleanup 通过 |
-| 2026-08-16 | 根据审计发现实现 phase/source lineage、root seal、compact sidecar 和 negative-result rendering | post-run attestation 工具；提交后再对 formal roots 执行，不改 sealed trial/raw evidence |
+| 2026-08-16 03:35:22Z | 提交 phase/source lineage、root seal、compact sidecar 和 negative-result rendering | clean tool commit `ad36ee8`；不改 sealed trial/raw evidence |
+| 2026-08-16 03:37:26Z | fresh 0.6B smoke 自动完成并封存 | `smoke-ad36ee8-20260816`，两个 COMPLETE/selectable trial |
+| 2026-08-16 03:39:22Z | Chat post-run attestation 完成 | 共 143 entries（含 96 anchors），seal SHA-256 `7d704bee…e191` |
+| 2026-08-16 03:40:07Z | RAG post-run attestation 完成 | 共 143 entries（含 96 anchors），seal SHA-256 `7df0229c…98b7` |
 
 提交时间表示功能被整理进 Git 的时间，并不冒充每个函数开始或完成编写的时间。
 
@@ -565,6 +569,17 @@ fixed budget，adaptive p99 TTFT 为：
 - **回归**：formal raw audit 确认每个 workload 各六条 negative conditions；
   reporting/artifact tests 验证渲染合同、解释、preemption 字段和默认仍最佳的展示机制。
 
+### 10.14 CI 的 Python 版本下限与项目元数据冲突
+
+- **问题**：`.github/workflows/cli.yml` 和 `release.yml` 仍调度 Python 3.9，但
+  `pyproject.toml` 已声明 `requires-python = ">=3.10"`。
+- **后果**：PR 和 main release job 会在 `pip install -e .[dev]` 阶段被包元数据拒绝；即使
+  本机 Python 3.12 的全部测试通过，GitHub Actions 仍会必然红灯。
+- **修复**：两份 matrix 统一为 3.10/3.11/3.12，删除仅为 macOS 3.9 设置的 exclude；新增
+  契约测试，断言两份 workflow 不含 3.9 且包含三个受支持版本。
+- **回归**：重新解析两份 YAML，文档定向测试 11 passed；全量 suite 最终为 299 passed、
+  1 skipped。该问题说明发布门禁还必须核对 package metadata 与远端 CI matrix 的交集。
+
 ## 11. Post-run attestation
 
 正式测量 commit 与 attestation tool commit 必须分开记录。attestation 可以新增审计 view 和
@@ -604,9 +619,21 @@ root seal，但不能把后来代码冒充成原测量源码，也不能改写 s
 使用 `ArtifactStore.validate_experiment_integrity()`。CLI 和 Python API 走同一个 preflight、
 view-generation、seal 和 validation 路径。
 
-执行完成后的封存权威状态以 artifact 中的 `experiment-integrity.json` 为准。开发顺序要求先完成
-attestation 代码 review、门禁和 commit，再对 formal roots 执行；在此之前不得预写 seal hash
-或把未执行的命令声称为已完成。
+实际执行使用 clean tool commit `ad36ee8e0e15a6d0502a35f9e794b056b9522a82`，与 formal
+measurement commit `34a25a2e10951bfab1c2a86b4c60aff5bef785df` 分开记录：
+
+| Root | UTC | Total entries (including anchors) | Semantic/status/lineage/negative | Seal SHA-256 |
+|---|---|---:|---|---|
+| Chat | `2026-08-16T03:39:22.962525+00:00` | 143 total (96 anchors) | 96/96；89 COMPLETE + 7 INFEASIBLE；legacy 96、derived repeat/holdout 30、negative 6 | `7d704beea1890d14f7a411d677b867cdc8a06584a5040dbde2793f6723c8e191` |
+| RAG | `2026-08-16T03:40:07.786811+00:00` | 143 total (96 anchors) | 96/96；89 COMPLETE + 7 INFEASIBLE；legacy 96、derived repeat/holdout 30、negative 6 | `7df0229c115ec0ce41cbc3c72624b13597b2a33d8f93a762242dbe723ca498b7` |
+
+Chat 原 `summary.json`/`scheduler-ablation.json` SHA-256 分别保持
+`ade1eaa13a4f78c49c498404c100f2e5458c6a194b1d378ccda283d415a04361` /
+`c78bdb8d57c5deef51053f41d4e50d8d48f9fe0ee9b5d069220d3a562f138c8b`；RAG 对应
+`b9da5621b4f075b387a1e2be93968294367249a205992b0c7cffe6acb5895e2f` /
+`3d382db39c7279b27752137567cc7779c510fd6419f6f995aa29608285b5e1e3`。重复普通
+`attest` 只验证且 seal 字节不变。封存权威状态以各 root 的 `experiment-integrity.json`
+为准。
 
 ## 12. 测试和发布门禁
 
@@ -635,8 +662,28 @@ git diff --check: passed
 ```
 
 这些是提交前工作树的实际输出。早先的测试数量估计没有写成结果；测试增加后应记录最终实际
-数字，而不是把 collect count 或计划值写成 passed。attestation 代码在该次门禁时尚未完成
-最终审阅和提交，因此这组软件门禁也没有被冒充成 formal measurement commit 的一部分。
+数字，而不是把 collect count 或计划值写成 passed。这组门禁完成后，代码经审阅提交为 clean
+`ad36ee8`，再物化两份 formal attestation；它没有被冒充成 `34a25a2` formal measurement
+commit 的一部分。
+
+attestation 物化和文档收口后的最终发布门禁为：
+
+```text
+299 passed, 1 skipped, 44 warnings in 29.09s
+documentation targeted suite: 11 passed
+Black: 99 files clean
+Ruff: passed
+mypy: Success — 60 source files
+uv lock --check / pip check / bash -n: passed
+uv build: sdist and wheel built successfully
+git diff --check: passed
+```
+
+提交后的 fresh smoke `smoke-ad36ee8-20260816` 有两个 COMPLETE/selectable trials、共 37 个
+sealed entries（其中两个是 anchors），measurement/tool provenance 都是 clean `ad36ee8`；它保存新的
+schema-5 recorded lineage，自动 seal 和重复验证均通过。其 `experiment-integrity.json` SHA-256 为
+`4b2552d3e375681ab3e1067962c79d50c777635e23034e539294283af946040c`。结束后现场
+`nvidia-smi` 为 2 MiB/0%，没有 compute PID；该瞬时观察不替代 cleanup artifact。
 
 标准最终门禁命令：
 

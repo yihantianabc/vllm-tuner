@@ -82,6 +82,8 @@ def test_readme_preserves_attribution_and_completed_evidence_boundaries() -> Non
         "tests/unit/test_benchmark_sse_client.py",
         "docs/METHODOLOGY.md#artifact-acceptance",
         "aa9d70a",
+        "https://github.com/yihantianabc/vllm-tuner/commit/",
+        "ad36ee8e0e15a6d0502a35f9e794b056b9522a82",
         "34a25a2e10951bfab1c2a86b4c60aff5bef785df",
         "Qwen3-0.6B",
         "smoke tests only",
@@ -108,7 +110,7 @@ def test_reproduction_guide_separates_evidence_tiers_and_records_formal_runs() -
         "legacy bring-up artifact",
         "historical boundary",
         "reproduction_gpu_20260815_a",
-        "smoke-20260815-b",
+        "smoke-ad36ee8-20260816",
         "qwen25-3b-preflight-20260815-a",
         "two-request default run",
         "./scripts/setup_data_disk_reproduction.sh",
@@ -130,6 +132,8 @@ def test_reproduction_guide_separates_evidence_tiers_and_records_formal_runs() -
         "experiment-integrity.json",
         "summary.compact-v1.json",
         "--reseal",
+        "7d704beea1890d14f7a411d677b867cdc8a06584a5040dbde2793f6723c8e191",
+        "7df0229c115ec0ce41cbc3c72624b13597b2a33d8f93a762242dbe723ca498b7",
     )
     for text in required:
         assert text in reproduction
@@ -181,6 +185,16 @@ def test_reproduction_environment_is_locked_and_inherited_by_formal_commands() -
         subprocess.run(["bash", "-n", str(REPOSITORY / "scripts" / script)], check=True)
 
 
+def test_ci_python_matrices_match_the_declared_package_floor() -> None:
+    """CI never schedules a Python version rejected by project metadata."""
+
+    for relative_path in (".github/workflows/cli.yml", ".github/workflows/release.yml"):
+        workflow = (REPOSITORY / relative_path).read_text(encoding="utf-8")
+        assert '"3.9"' not in workflow
+        for version in ("3.10", "3.11", "3.12"):
+            assert f'"{version}"' in workflow
+
+
 def test_project_plan_audit_tracks_completed_evidence_and_deferrals() -> None:
     """The M0-M6 audit must prove core completion without hiding deferred work."""
 
@@ -197,7 +211,9 @@ def test_project_plan_audit_tracks_completed_evidence_and_deferrals() -> None:
         "Core M0–M5 complete; optional M6 deferred explicitly",
         "Definition-of-Done audit",
         "Core Definition of Done complete with negative performance outcome",
-        "Each workload has 89 COMPLETE and seven constraint-INFEASIBLE outcomes",
+        "ad36ee8",
+        "143 entries in total, including 96 trial anchors",
+        "89 COMPLETE, seven constraint-INFEASIBLE",
         "Chat yields only a tested",
         "M6 prefix-caching",
     )
@@ -228,6 +244,14 @@ def test_formal_result_snapshot_records_negative_results_and_claim_boundaries() 
     compact_snapshot = " ".join(snapshot.split())
     required = (
         "34a25a2e10951bfab1c2a86b4c60aff5bef785df",
+        "ad36ee8e0e15a6d0502a35f9e794b056b9522a82",
+        "8ea95533232bf6b0d45b75513ec4c799f3ab42595fb66abd5e9893142fbfae7a",
+        "7d704beea1890d14f7a411d677b867cdc8a06584a5040dbde2793f6723c8e191",
+        "7df0229c115ec0ce41cbc3c72624b13597b2a33d8f93a762242dbe723ca498b7",
+        "ade1eaa13a4f78c49c498404c100f2e5458c6a194b1d378ccda283d415a04361",
+        "c78bdb8d57c5deef51053f41d4e50d8d48f9fe0ee9b5d069220d3a562f138c8b",
+        "b9da5621b4f075b387a1e2be93968294367249a205992b0c7cffe6acb5895e2f",
+        "3d382db39c7279b27752137567cc7779c510fd6419f6f995aa29608285b5e1e3",
         "89e5d6f9e505f72aec5594323c4fc6f3e35ed5c0fa7d7927d4d1b1ff63b1c6b9",
         "aac7760903a8c609756fbead137a694065dd8c1193081e97f6884653c0200b84",
         "d92f7fc83a04e57aaa424ef9da1e92ecd40f33fe00247f45dde75583f3af0c57",
@@ -279,6 +303,7 @@ def test_completed_docs_contain_no_stale_formal_pending_placeholders() -> None:
         REPOSITORY / "docs/FORMAL_EXPERIMENTS.md",
         REPOSITORY / "docs/PLAN_AUDIT.md",
         REPOSITORY / "docs/DEVELOPMENT_LOG.md",
+        REPOSITORY / "docs/results/qwen25-3b-34a25a2.md",
     )
     stale_phrases = (
         "Pending final commit",
@@ -286,6 +311,9 @@ def test_completed_docs_contain_no_stale_formal_pending_placeholders() -> None:
         "Status: NOT YET RECORDED",
         "Formal evidence pending",
         "does **not** satisfy the plan's experimental Definition of Done",
+        "once executed after the tool revision",
+        "must be executed only after its implementation revision is committed",
+        "提交后再对 formal roots 执行",
     )
     for path in paths:
         contents = path.read_text(encoding="utf-8")
