@@ -50,6 +50,20 @@ def _clean_cleanup_status() -> dict[str, bool]:
     }
 
 
+def test_environment_fingerprint_tolerates_missing_sysconf(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows has no os.sysconf, so physical memory remains best-effort metadata."""
+
+    def missing_sysconf(_name: str) -> int:
+        raise AttributeError("sysconf is unavailable")
+
+    monkeypatch.setattr(manifest_module.os, "sysconf", missing_sysconf)
+    monkeypatch.setattr(manifest_module, "_run_readonly", lambda *_args, **_kwargs: None)
+
+    fingerprint = manifest_module.collect_environment_fingerprint()
+
+    assert fingerprint.memory_bytes is None
+
+
 def _write_consistent_trial(store: ArtifactStore, trial_id: str = "trial-0") -> TrialResult:
     base = f"trials/{trial_id}"
     request = {

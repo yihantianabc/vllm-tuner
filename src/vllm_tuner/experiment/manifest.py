@@ -215,7 +215,7 @@ def collect_environment_fingerprint() -> EnvironmentFingerprint:
         page_size = os.sysconf("SC_PAGE_SIZE")
         page_count = os.sysconf("SC_PHYS_PAGES")
         memory_bytes = int(page_size * page_count)
-    except (OSError, ValueError):
+    except (AttributeError, OSError, ValueError):
         pass
 
     return EnvironmentFingerprint(
