@@ -3,11 +3,27 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from vllm_tuner.longctx.capacity_evidence import (
+    DeviceMemoryEvidence,
     build_capacity_runtime_evidence,
     parse_cache_config_info,
 )
+
+CUDA_TOTAL = 33_670_758_400
+PHYSICAL_TOTAL = 32607 * (1 << 20)
+
+
+def _device_memory() -> DeviceMemoryEvidence:
+    return DeviceMemoryEvidence(
+        device_index=0,
+        physical_total_memory_bytes=PHYSICAL_TOTAL,
+        physical_free_memory_bytes=PHYSICAL_TOTAL,
+        cuda_allocatable_total_memory_bytes=CUDA_TOTAL,
+        cuda_free_memory_bytes=CUDA_TOTAL,
+        physical_minus_cuda_total_bytes=PHYSICAL_TOTAL - CUDA_TOTAL,
+    )
 
 
 def _metrics(*, blocks: int = 14618, utilization: str = "0.9", enabled: str = "True") -> str:
@@ -59,8 +75,7 @@ def test_build_capacity_runtime_evidence_cross_checks_log_and_info_metric() -> N
         runtime_profile_sha256="profile",
         server_log_text=_server_log(),
         metrics_text=_metrics(),
-        total_memory_bytes=32607 * (1 << 20),
-        initial_free_memory_bytes=32607 * (1 << 20),
+        device_memory=_device_memory(),
     )
 
     assert evidence.logged_capacity_consistent is True
@@ -70,6 +85,8 @@ def test_build_capacity_runtime_evidence_cross_checks_log_and_info_metric() -> N
     assert evidence.observation.cached_tokens == 233888
     assert evidence.observation.usable_num_gpu_blocks == 14617
     assert len(evidence.raw_capacity_log_lines) == 3
+    assert evidence.observation.total_memory_bytes == CUDA_TOTAL
+    assert evidence.device_memory.physical_minus_cuda_total_bytes == 520_159_232
 
 
 def test_capacity_evidence_rejects_metric_log_block_mismatch() -> None:
@@ -79,8 +96,29 @@ def test_capacity_evidence_rejects_metric_log_block_mismatch() -> None:
             runtime_profile_sha256="profile",
             server_log_text=_server_log(tokens=233872),
             metrics_text=_metrics(blocks=14618),
-            total_memory_bytes=32607 * (1 << 20),
-            initial_free_memory_bytes=32607 * (1 << 20),
+            device_memory=_device_memory(),
+        )
+
+
+def test_device_memory_evidence_rejects_inconsistent_domains() -> None:
+    with pytest.raises(ValidationError, match="gap is inconsistent"):
+        DeviceMemoryEvidence(
+            device_index=0,
+            physical_total_memory_bytes=PHYSICAL_TOTAL,
+            physical_free_memory_bytes=PHYSICAL_TOTAL,
+            cuda_allocatable_total_memory_bytes=CUDA_TOTAL,
+            cuda_free_memory_bytes=CUDA_TOTAL,
+            physical_minus_cuda_total_bytes=0,
+        )
+
+    with pytest.raises(ValidationError, match="CUDA free memory exceeds"):
+        DeviceMemoryEvidence(
+            device_index=0,
+            physical_total_memory_bytes=PHYSICAL_TOTAL,
+            physical_free_memory_bytes=PHYSICAL_TOTAL,
+            cuda_allocatable_total_memory_bytes=CUDA_TOTAL,
+            cuda_free_memory_bytes=CUDA_TOTAL + 1,
+            physical_minus_cuda_total_bytes=PHYSICAL_TOTAL - CUDA_TOTAL,
         )
 
 

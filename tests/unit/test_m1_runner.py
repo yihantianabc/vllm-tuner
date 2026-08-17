@@ -6,11 +6,13 @@ import hashlib
 import json
 import math
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
+from vllm_tuner.longctx.capacity_evidence import DeviceMemoryEvidence
 from vllm_tuner.longctx.kv_capacity_planner import (
     ContextBin,
     ContextDistributionSpec,
@@ -24,8 +26,12 @@ from vllm_tuner.longctx.m0_config import (
 )
 from vllm_tuner.longctx.m1_config import LongContextM1Config, M1InitializationProbe
 from vllm_tuner.longctx.m1_runner import (
+    CUDA_MEMORY_PROBE,
     M1_INTEGRITY_FILE,
+    M1_PROBE_SCHEMA_VERSION,
+    M1_SCHEMA_VERSION,
     LongContextM1Runner,
+    _gpu_memory_snapshot,
     _validate_tree,
 )
 from vllm_tuner.longctx.runtime_identity import (
@@ -34,7 +40,8 @@ from vllm_tuner.longctx.runtime_identity import (
 )
 from vllm_tuner.runtime.server import CleanupStatus
 
-TOTAL_MEMORY = 32607 * (1 << 20)
+PHYSICAL_TOTAL_MEMORY = 32607 * (1 << 20)
+CUDA_TOTAL_MEMORY = 33_670_758_400
 NON_KV_MEMORY = 17_359_500_000
 BLOCK_BYTES = 917_504
 REVISION = "a" * 40
@@ -245,7 +252,7 @@ class FakeServer:
         self.trial_dir.mkdir(parents=True, exist_ok=True)
         utilization = float(self.config.vllm_args["gpu-memory-utilization"])
         max_model_len = int(self.config.vllm_args["max-model-len"])
-        requested = math.ceil(TOTAL_MEMORY * utilization)
+        requested = math.ceil(CUDA_TOTAL_MEMORY * utilization)
         self.blocks = (requested - NON_KV_MEMORY) // BLOCK_BYTES
         tokens = self.blocks * 16
         concurrency = self.blocks / math.ceil(max_model_len / 16)
@@ -306,6 +313,19 @@ def _runner(
     *,
     resume: bool = False,
 ) -> LongContextM1Runner:
+    memory = DeviceMemoryEvidence(
+        device_index=0,
+        physical_total_memory_bytes=PHYSICAL_TOTAL_MEMORY,
+        physical_free_memory_bytes=PHYSICAL_TOTAL_MEMORY,
+        cuda_allocatable_total_memory_bytes=CUDA_TOTAL_MEMORY,
+        cuda_free_memory_bytes=CUDA_TOTAL_MEMORY,
+        physical_minus_cuda_total_bytes=PHYSICAL_TOTAL_MEMORY - CUDA_TOTAL_MEMORY,
+    )
+
+    def memory_reader(device_index: int) -> DeviceMemoryEvidence:
+        assert device_index == 0
+        return memory
+
     return LongContextM1Runner(
         config,
         experiment_id,
@@ -313,7 +333,7 @@ def _runner(
         resume=resume,
         server_factory=FakeServer,
         metrics_fetcher=_metrics_fetcher,
-        gpu_memory_reader=lambda: (TOTAL_MEMORY, TOTAL_MEMORY),
+        gpu_memory_reader=memory_reader,
         runtime_facts=runtime,
         execution_environment=EXECUTION_ENVIRONMENT,
     )
@@ -349,7 +369,12 @@ async def test_m1_runner_calibrates_validates_seals_and_resumes(tmp_path: Path) 
         "extrapolate-8k-r0",
         "extrapolate-16k-r0",
     ]
-    _validate_tree(root, M1_INTEGRITY_FILE, "longctx-m1-init.v1", "m1-init")
+    _validate_tree(root, M1_INTEGRITY_FILE, M1_SCHEMA_VERSION, "m1-init")
+    heldout = json.loads(
+        (root / "probes" / "heldout-32k-r0" / "capacity-evidence.json").read_text(encoding="utf-8")
+    )
+    assert heldout["observation"]["total_memory_bytes"] == CUDA_TOTAL_MEMORY
+    assert heldout["device_memory"]["physical_total_memory_bytes"] == PHYSICAL_TOTAL_MEMORY
 
     resumed = await _runner(config, repository, runtime, "m1-init", resume=True).run()
     assert resumed["resume_replayed"] is True
@@ -386,7 +411,7 @@ async def test_m1_probe_fails_closed_on_unclean_cleanup(tmp_path: Path) -> None:
     _validate_tree(
         failed_dir,
         "probe-integrity.json",
-        "longctx-m1-probe.v1",
+        M1_PROBE_SCHEMA_VERSION,
         "cal-75-r0",
     )
 
@@ -401,3 +426,62 @@ async def test_m1_probe_fails_closed_on_unclean_cleanup(tmp_path: Path) -> None:
         / "probe-integrity.json"
     ).is_file()
     assert len(FakeServer.calls) == 10
+
+
+def test_gpu_memory_snapshot_uses_isolated_cuda_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append((command, kwargs))
+        if command[0] == "nvidia-smi":
+            return subprocess.CompletedProcess(command, 0, "32607, 32110\n", "")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            json.dumps(
+                {
+                    "cuda_free_memory_bytes": 33_138_868_224,
+                    "cuda_allocatable_total_memory_bytes": CUDA_TOTAL_MEMORY,
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    memory = _gpu_memory_snapshot(3)
+
+    assert memory.physical_total_memory_bytes == PHYSICAL_TOTAL_MEMORY
+    assert memory.cuda_allocatable_total_memory_bytes == CUDA_TOTAL_MEMORY
+    assert memory.physical_minus_cuda_total_bytes == 520_159_232
+    assert calls[0][0][0] == "nvidia-smi"
+    assert calls[1][0] == [sys.executable, "-c", CUDA_MEMORY_PROBE]
+    environment = calls[1][1]["env"]
+    assert isinstance(environment, dict)
+    assert environment["CUDA_VISIBLE_DEVICES"] == "3"
+
+
+def test_gpu_memory_snapshot_fails_closed_on_invalid_cuda_domain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        (
+            subprocess.CompletedProcess([], 0, "32607, 32110\n", ""),
+            subprocess.CompletedProcess(
+                [],
+                0,
+                json.dumps(
+                    {
+                        "cuda_free_memory_bytes": PHYSICAL_TOTAL_MEMORY + 1,
+                        "cuda_allocatable_total_memory_bytes": CUDA_TOTAL_MEMORY,
+                    }
+                ),
+                "",
+            ),
+        )
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: next(responses))
+
+    with pytest.raises(ValueError, match="CUDA free memory exceeds"):
+        _gpu_memory_snapshot(0)

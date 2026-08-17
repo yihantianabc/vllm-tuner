@@ -5,10 +5,10 @@ from __future__ import annotations
 import math
 import re
 from decimal import Decimal, InvalidOperation
-from typing import Optional
+from typing import Literal, Optional
 
 import httpx
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, model_validator
 
 from vllm_tuner.profiling.prometheus import parse_prometheus_text
 
@@ -52,12 +52,51 @@ class StartupCacheFormatEvidence(StrictFrozenModel):
     enable_chunked_prefill: bool
 
 
+class DeviceMemoryEvidence(StrictFrozenModel):
+    """Keep physical VRAM diagnostics separate from vLLM's CUDA budget."""
+
+    device_index: int = Field(ge=0)
+    physical_total_memory_bytes: int = Field(gt=0)
+    physical_free_memory_bytes: int = Field(ge=0)
+    cuda_allocatable_total_memory_bytes: int = Field(gt=0)
+    cuda_free_memory_bytes: int = Field(gt=0)
+    physical_minus_cuda_total_bytes: int = Field(ge=0)
+    physical_source: Literal["nvidia-smi"] = "nvidia-smi"
+    cuda_source: Literal["torch.cuda.mem_get_info"] = "torch.cuda.mem_get_info"
+    cuda_probe_isolated_process: Literal[True] = True
+
+    @model_validator(mode="after")
+    def validate_memory_domains(self) -> "DeviceMemoryEvidence":
+        if self.physical_free_memory_bytes > self.physical_total_memory_bytes:
+            raise ValueError("physical free memory exceeds physical total memory")
+        if self.cuda_free_memory_bytes > self.cuda_allocatable_total_memory_bytes:
+            raise ValueError("CUDA free memory exceeds CUDA allocatable total memory")
+        if self.physical_total_memory_bytes < self.cuda_allocatable_total_memory_bytes:
+            raise ValueError("physical total memory is below CUDA allocatable total memory")
+        expected_gap = self.physical_total_memory_bytes - self.cuda_allocatable_total_memory_bytes
+        if self.physical_minus_cuda_total_bytes != expected_gap:
+            raise ValueError("physical/CUDA total-memory gap is inconsistent")
+        return self
+
+
 class CapacityRuntimeEvidence(StrictFrozenModel):
+    device_memory: DeviceMemoryEvidence
     cache_config: CacheConfigInfoEvidence
     startup_format: StartupCacheFormatEvidence
     observation: VLLMInitializationObservation
     logged_capacity_consistent: bool
     raw_capacity_log_lines: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def require_cuda_budget_domain(self) -> "CapacityRuntimeEvidence":
+        if (
+            self.observation.total_memory_bytes
+            != self.device_memory.cuda_allocatable_total_memory_bytes
+        ):
+            raise ValueError("Planner total memory must use CUDA allocatable memory")
+        if self.observation.initial_free_memory_bytes != self.device_memory.cuda_free_memory_bytes:
+            raise ValueError("Planner free memory must use the isolated CUDA reading")
+        return self
 
 
 def _required_label(labels: dict[str, str], name: str) -> str:
@@ -194,8 +233,7 @@ def build_capacity_runtime_evidence(
     runtime_profile_sha256: str,
     server_log_text: str,
     metrics_text: str,
-    total_memory_bytes: int,
-    initial_free_memory_bytes: int,
+    device_memory: DeviceMemoryEvidence,
 ) -> CapacityRuntimeEvidence:
     cache_config = parse_cache_config_info(metrics_text)
     startup_format = _startup_cache_format(server_log_text)
@@ -203,8 +241,8 @@ def build_capacity_runtime_evidence(
         run_id=run_id,
         runtime_profile_sha256=runtime_profile_sha256,
         server_log_text=server_log_text,
-        total_memory_bytes=total_memory_bytes,
-        initial_free_memory_bytes=initial_free_memory_bytes,
+        total_memory_bytes=device_memory.cuda_allocatable_total_memory_bytes,
+        initial_free_memory_bytes=device_memory.cuda_free_memory_bytes,
         gpu_memory_utilization_ppm=cache_config.gpu_memory_utilization_ppm,
         resolved_block_size=cache_config.resolved_block_size,
         num_gpu_blocks_exact=cache_config.num_gpu_blocks,
@@ -224,6 +262,7 @@ def build_capacity_runtime_evidence(
     if len(capacity_lines) != 3:
         raise ValueError("server log must contain exactly three capacity evidence lines")
     return CapacityRuntimeEvidence(
+        device_memory=device_memory,
         cache_config=cache_config,
         startup_format=startup_format,
         observation=observation,

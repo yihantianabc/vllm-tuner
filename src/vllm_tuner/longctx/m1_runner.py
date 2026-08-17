@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal, Mapping, Optional, cast
@@ -25,6 +26,7 @@ from vllm_tuner.runtime.server import ManagedVLLMServer
 
 from .capacity_evidence import (
     CapacityRuntimeEvidence,
+    DeviceMemoryEvidence,
     build_capacity_runtime_evidence,
     fetch_metrics_text,
 )
@@ -55,7 +57,8 @@ from .m1_config import LongContextM1Config, M1InitializationProbe
 from .model_identity import ModelIdentityFacts, require_model_identity
 from .runtime_identity import RuntimeIdentityFacts, require_upstream_runtime
 
-M1_SCHEMA_VERSION = "longctx-m1-init.v1"
+M1_SCHEMA_VERSION = "longctx-m1-init.v2"
+M1_PROBE_SCHEMA_VERSION = "longctx-m1-probe.v2"
 M1_INTEGRITY_FILE = "m1-integrity.json"
 PROBE_INTEGRITY_FILE = "probe-integrity.json"
 EXPERIMENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -104,7 +107,20 @@ class M1Summary(StrictFrozenModel):
 
 
 MetricsFetcher = Callable[[str], Awaitable[str]]
-GPUMemoryReader = Callable[[], tuple[int, int]]
+GPUMemoryReader = Callable[[int], DeviceMemoryEvidence]
+
+CUDA_MEMORY_PROBE = """\
+import json
+
+import torch
+
+torch.cuda.set_device(0)
+free_memory_bytes, total_memory_bytes = torch.cuda.mem_get_info(0)
+print(json.dumps({
+    "cuda_free_memory_bytes": free_memory_bytes,
+    "cuda_allocatable_total_memory_bytes": total_memory_bytes,
+}, sort_keys=True))
+"""
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -183,10 +199,20 @@ def _validate_tree(root: Path, integrity_name: str, schema: str, identity: str) 
             raise ValueError(f"artifact checksum mismatch: {name}")
 
 
-def _gpu_memory_from_nvidia_smi() -> tuple[int, int]:
-    completed = subprocess.run(
+def _required_positive_probe_int(payload: object, name: str) -> int:
+    if not isinstance(payload, dict):
+        raise ValueError("CUDA memory probe output must be a JSON object")
+    value = payload.get(name)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"CUDA memory probe field {name!r} must be a positive integer")
+    return value
+
+
+def _gpu_memory_snapshot(device_index: int) -> DeviceMemoryEvidence:
+    physical = subprocess.run(
         [
             "nvidia-smi",
+            f"--id={device_index}",
             "--query-gpu=memory.total,memory.free",
             "--format=csv,noheader,nounits",
         ],
@@ -195,13 +221,42 @@ def _gpu_memory_from_nvidia_smi() -> tuple[int, int]:
         text=True,
         timeout=15,
     )
-    row = next((line for line in completed.stdout.splitlines() if line.strip()), None)
+    row = next((line for line in physical.stdout.splitlines() if line.strip()), None)
     if row is None:
         raise ValueError("nvidia-smi returned no memory row")
     columns = [column.strip() for column in row.split(",")]
     if len(columns) != 2:
         raise ValueError(f"invalid nvidia-smi memory row: {row!r}")
-    return int(columns[0]) * (1 << 20), int(columns[1]) * (1 << 20)
+    try:
+        physical_total = int(columns[0]) * (1 << 20)
+        physical_free = int(columns[1]) * (1 << 20)
+    except ValueError as error:
+        raise ValueError(f"invalid nvidia-smi memory row: {row!r}") from error
+
+    environment = os.environ.copy()
+    environment["CUDA_VISIBLE_DEVICES"] = str(device_index)
+    cuda = subprocess.run(
+        [sys.executable, "-c", CUDA_MEMORY_PROBE],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=environment,
+    )
+    try:
+        payload = json.loads(cuda.stdout)
+    except json.JSONDecodeError as error:
+        raise ValueError("CUDA memory probe returned invalid JSON") from error
+    cuda_free = _required_positive_probe_int(payload, "cuda_free_memory_bytes")
+    cuda_total = _required_positive_probe_int(payload, "cuda_allocatable_total_memory_bytes")
+    return DeviceMemoryEvidence(
+        device_index=device_index,
+        physical_total_memory_bytes=physical_total,
+        physical_free_memory_bytes=physical_free,
+        cuda_allocatable_total_memory_bytes=cuda_total,
+        cuda_free_memory_bytes=cuda_free,
+        physical_minus_cuda_total_bytes=physical_total - cuda_total,
+    )
 
 
 def _clean_execution_environment(environment: Mapping[str, str]) -> dict[str, str]:
@@ -241,7 +296,7 @@ class LongContextM1Runner:
         resume: bool = False,
         server_factory: type[ManagedVLLMServer] = ManagedVLLMServer,
         metrics_fetcher: MetricsFetcher = fetch_metrics_text,
-        gpu_memory_reader: GPUMemoryReader = _gpu_memory_from_nvidia_smi,
+        gpu_memory_reader: GPUMemoryReader = _gpu_memory_snapshot,
         runtime_facts: Optional[RuntimeIdentityFacts] = None,
         model_facts: Optional[ModelIdentityFacts] = None,
         execution_environment: Optional[Mapping[str, str]] = None,
@@ -425,7 +480,7 @@ class LongContextM1Runner:
             integrity = path / PROBE_INTEGRITY_FILE
             if not integrity.is_file():
                 raise ValueError(f"unsealed probe attempt cannot be resumed safely: {path}")
-            _validate_tree(path, PROBE_INTEGRITY_FILE, "longctx-m1-probe.v1", path.name)
+            _validate_tree(path, PROBE_INTEGRITY_FILE, M1_PROBE_SCHEMA_VERSION, path.name)
             status = _read_json(path / "status.json")
             if status.get("status") == "COMPLETE":
                 return path.name, path, status
@@ -487,7 +542,7 @@ class LongContextM1Runner:
                 "finished_at": utc_now_iso(),
             },
         )
-        _seal_tree(probe_dir, PROBE_INTEGRITY_FILE, "longctx-m1-probe.v1", run_id)
+        _seal_tree(probe_dir, PROBE_INTEGRITY_FILE, M1_PROBE_SCHEMA_VERSION, run_id)
 
     async def _run_probe(
         self,
@@ -527,7 +582,9 @@ class LongContextM1Runner:
             )
         probe_dir.mkdir(parents=True)
 
-        total_memory, initial_free = self.gpu_memory_reader()
+        device_memory = self.gpu_memory_reader(self.config.gpu.device_ids[0])
+        cuda_allocatable_total = device_memory.cuda_allocatable_total_memory_bytes
+        cuda_free = device_memory.cuda_free_memory_bytes
         cache = CacheLayoutSpec(
             requested_dtype="auto",
             resolved_dtype=KVDType.BFLOAT16,
@@ -549,8 +606,8 @@ class LongContextM1Runner:
         preliminary = plan_kv_capacity(
             self._base_planner_input(
                 probe=probe,
-                total_memory_bytes=total_memory,
-                initial_free_memory_bytes=initial_free,
+                total_memory_bytes=cuda_allocatable_total,
+                initial_free_memory_bytes=cuda_free,
                 non_kv=zero_non_kv,
                 cache=cache,
             )
@@ -591,8 +648,7 @@ class LongContextM1Runner:
             runtime_profile_sha256=preliminary.runtime_profile_sha256,
             server_log_text=log_text,
             metrics_text=metrics_text,
-            total_memory_bytes=total_memory,
-            initial_free_memory_bytes=initial_free,
+            device_memory=device_memory,
         )
         expected_architecture = model_spec_from_hf_config(
             self.config.model.local_path / "config.json"
@@ -620,7 +676,7 @@ class LongContextM1Runner:
                 ),
             },
         )
-        _seal_tree(probe_dir, PROBE_INTEGRITY_FILE, "longctx-m1-probe.v1", run_id)
+        _seal_tree(probe_dir, PROBE_INTEGRITY_FILE, M1_PROBE_SCHEMA_VERSION, run_id)
         return (
             ProbeRunRecord(
                 run_id=run_id,
