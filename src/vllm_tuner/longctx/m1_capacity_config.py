@@ -239,6 +239,12 @@ class M1CapacityServerProfile(StrictFrozenModel):
     expected_max_model_len: Literal[32_768]
     expected_max_num_seqs: Literal[256]
     expected_max_num_batched_tokens: Literal[2_048]
+    expected_model_dtype: Literal["torch.bfloat16"]
+    expected_kv_cache_dtype: Literal["auto"]
+    expected_attention_backend: Literal["FLASH_ATTN"]
+    expected_enable_prefix_caching: Literal[True]
+    expected_enable_chunked_prefill: Literal[True]
+    expected_block_size: Literal[16]
     inherit_upstream_defaults: Literal[True]
 
 

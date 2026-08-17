@@ -186,6 +186,12 @@ def _valid_data(tmp_path: Path) -> dict[str, object]:
             "expected_max_model_len": 32_768,
             "expected_max_num_seqs": 256,
             "expected_max_num_batched_tokens": 2_048,
+            "expected_model_dtype": "torch.bfloat16",
+            "expected_kv_cache_dtype": "auto",
+            "expected_attention_backend": "FLASH_ATTN",
+            "expected_enable_prefix_caching": True,
+            "expected_enable_chunked_prefill": True,
+            "expected_block_size": 16,
             "inherit_upstream_defaults": True,
         },
         "contexts": (
@@ -246,6 +252,12 @@ def test_formal_matrix_converts_one_point_without_server_overrides(tmp_path: Pat
     assert tuning.workload.seed == 20_260_917
     assert config.server_profile.expected_max_num_seqs == 256
     assert config.server_profile.expected_max_num_batched_tokens == 2_048
+    assert config.server_profile.expected_model_dtype == "torch.bfloat16"
+    assert config.server_profile.expected_kv_cache_dtype == "auto"
+    assert config.server_profile.expected_attention_backend == "FLASH_ATTN"
+    assert config.server_profile.expected_enable_prefix_caching is True
+    assert config.server_profile.expected_enable_chunked_prefill is True
+    assert config.server_profile.expected_block_size == 16
     assert tuning.slo.ttft_ms == context.slo.ttft_ms
     assert tuning.constraints.max_error_rate == 0.0
     assert tuning.telemetry.enabled is True

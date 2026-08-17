@@ -927,6 +927,144 @@ def longctx_m1_init(
         raise typer.Exit(1)
 
 
+@app.command("longctx-m1-capacity")
+def longctx_m1_capacity(
+    config: str = typer.Option(
+        "experiments/long_context/v5/m1-capacity-smoke.yaml",
+        "--config",
+        "-c",
+        help="Strict long-context v5 M1 capacity smoke, pilot, or formal matrix",
+    ),
+    experiment_id: str = typer.Option(
+        "longctx-v5-m1-capacity-smoke-001",
+        "--experiment-id",
+        "-n",
+        help="Fresh M1 capacity-sweep artifact directory name",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Validate identity and replay only checksum-valid completed capacity points",
+    ),
+):
+    """Run an isolated v5 M1 capacity sweep without changing upstream defaults."""
+    try:
+        from vllm_tuner.longctx.m1_capacity_config import (
+            load_longctx_m1_capacity_config,
+        )
+        from vllm_tuner.longctx.m1_capacity_runner import LongContextM1CapacityRunner
+
+        config_obj = load_longctx_m1_capacity_config(config)
+        runner = LongContextM1CapacityRunner(
+            config_obj,
+            experiment_id,
+            repository=Path(__file__).resolve().parents[3],
+            resume=resume,
+        )
+        summary = asyncio.run(runner.run())
+        execution = summary.get("execution", {})
+        acceptance = summary.get("acceptance", {})
+        artifacts = summary.get("artifacts", {})
+        execution_passed = isinstance(execution, Mapping) and execution.get("passed") is True
+        acceptance_passed = isinstance(acceptance, Mapping) and acceptance.get("passed") is True
+
+        typer.echo(f"Execution: {'PASS' if execution_passed else 'FAIL'}")
+        if isinstance(execution, Mapping):
+            typer.echo(
+                "Capacity jobs: "
+                f"{execution.get('completed_jobs', 'unavailable')}/"
+                f"{execution.get('planned_jobs', 'unavailable')} completed; "
+                f"{execution.get('failed_jobs', 'unavailable')} failed"
+            )
+        if config_obj.evidence_role == "formal":
+            typer.echo(f"M1 capacity acceptance: {'PASS' if acceptance_passed else 'FAIL'}")
+            command_passed = acceptance_passed
+        else:
+            typer.echo(
+                "M1 capacity acceptance: NOT ELIGIBLE "
+                f"({config_obj.evidence_role} evidence is execution-only)"
+            )
+            command_passed = execution_passed
+        artifact_root = (
+            artifacts.get("root")
+            if isinstance(artifacts, Mapping)
+            else config_obj.artifacts.root / experiment_id
+        )
+        typer.echo(f"Artifacts: {artifact_root}")
+        resume_summary = summary.get("resume")
+        if isinstance(resume_summary, Mapping):
+            typer.echo(
+                "Resume: "
+                f"{resume_summary.get('replayed_trials', 0)} replayed, "
+                f"{resume_summary.get('new_attempts', 0)} new attempts"
+            )
+        if not command_passed:
+            message = (
+                "Formal M1 capacity acceptance failed; inspect the summary and do not enter M2."
+                if config_obj.evidence_role == "formal"
+                else "Capacity smoke/pilot execution failed; inspect the summary before continuing."
+            )
+            typer.echo(message, err=True)
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except (FileNotFoundError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+    except Exception as error:
+        logger.error("Long-context M1 capacity command failed: %s", error, exc_info=True)
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+
+
+def _longctx_status_value(value: object) -> str:
+    """Format nested status values predictably for shell operators."""
+    if value is None:
+        return "unavailable"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, sort_keys=True)
+
+
+@app.command("longctx-m1-capacity-status")
+def longctx_m1_capacity_status(
+    artifact_root: str = typer.Option(
+        "/root/autodl-tmp/longctx-v5-artifacts",
+        "--artifact-root",
+        help="Root containing running or sealed long-context v5 capacity artifacts",
+    ),
+    experiment_id: str = typer.Option(
+        "longctx-v5-m1-capacity-smoke-001",
+        "--experiment-id",
+        "-n",
+        help="Existing M1 capacity-sweep artifact directory name",
+    ),
+):
+    """Display unattended-run state and exact continuation paths for one M1 sweep."""
+    try:
+        from vllm_tuner.longctx.m1_capacity_runner import load_m1_capacity_status
+
+        root = Path(artifact_root).expanduser().resolve()
+        status = load_m1_capacity_status(root, experiment_id)
+        for label, key in (
+            ("State", "state"),
+            ("PID", "pid"),
+            ("GPU", "gpu"),
+            ("Log", "log"),
+            ("Result", "result"),
+            ("ETA", "eta"),
+            ("Resume", "resume"),
+            ("Sealed", "sealed"),
+            ("Acceptance", "acceptance"),
+        ):
+            typer.echo(f"{label}: {_longctx_status_value(status.get(key))}")
+    except (FileNotFoundError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+
+
 @app.command("longctx-m0-status")
 def longctx_m0_status(
     artifact_root: str = typer.Option(
