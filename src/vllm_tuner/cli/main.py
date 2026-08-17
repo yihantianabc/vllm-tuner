@@ -871,6 +871,62 @@ def longctx_m0(
         raise typer.Exit(1)
 
 
+@app.command("longctx-m1-init")
+def longctx_m1_init(
+    config: str = typer.Option(
+        "experiments/long_context/v5/m1-initialization.yaml",
+        "--config",
+        "-c",
+        help="Strict long-context v5 M1 initialization matrix",
+    ),
+    experiment_id: str = typer.Option(
+        "longctx-v5-m1-planner-init-001",
+        "--experiment-id",
+        "-n",
+        help="Fresh M1 initialization-validation artifact directory",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Replay only checksum-valid completed probes or a sealed root",
+    ),
+):
+    """Run M1 KV Planner calibration and held-out initialization validation."""
+    try:
+        from vllm_tuner.longctx.m1_config import load_longctx_m1_config
+        from vllm_tuner.longctx.m1_runner import LongContextM1Runner
+
+        config_obj = load_longctx_m1_config(config)
+        runner = LongContextM1Runner(
+            config_obj,
+            experiment_id,
+            repository=Path(__file__).resolve().parents[3],
+            resume=resume,
+        )
+        summary = asyncio.run(runner.run())
+        primary_passed = summary.get("primary_error_passed") is True
+        extrapolation_passed = summary.get("extrapolation_error_passed") is True
+        passed = summary.get("initialization_validation_passed") is True
+        typer.echo(f"M1 initialization validation: {'PASS' if passed else 'FAIL'}")
+        typer.echo(f"In-profile held-out: {'PASS' if primary_passed else 'FAIL'}")
+        typer.echo(f"Context extrapolation: {'PASS' if extrapolation_passed else 'FAIL'}")
+        typer.echo(f"Validation points: {len(summary.get('validations', []))}")
+        typer.echo(f"Artifacts: {runner.store.root}")
+        if summary.get("resume_replayed") is True:
+            typer.echo("Resume: sealed artifact replayed; no server was started")
+        if not passed:
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except (FileNotFoundError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+    except Exception as error:
+        logger.error("Long-context M1 init command failed: %s", error, exc_info=True)
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+
+
 @app.command("longctx-m0-status")
 def longctx_m0_status(
     artifact_root: str = typer.Option(

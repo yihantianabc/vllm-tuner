@@ -1,0 +1,79 @@
+project_line: "longctx-v5"
+milestone: "M1"
+experiment_kind: "planner-initialization-validation"
+
+model:
+  local_path: "/root/autodl-tmp/models/Qwen2.5-7B-Instruct"
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/qwen25-7b-instruct.model.lock.yaml"
+
+runtime:
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/upstream-runtime.lock.yaml"
+
+artifacts:
+  root: "/root/autodl-tmp/longctx-v5-artifacts"
+
+gpu:
+  device_ids: [0]
+  count: 1
+
+probes:
+  - probe_id: "cal-util-75"
+    role: "calibration"
+    gpu_memory_utilization_ppm: 750000
+    max_model_len: 32768
+    max_num_seqs: 512
+    repeats: 2
+  - probe_id: "cal-util-80"
+    role: "calibration"
+    gpu_memory_utilization_ppm: 800000
+    max_model_len: 32768
+    max_num_seqs: 512
+    repeats: 2
+  - probe_id: "cal-util-85"
+    role: "calibration"
+    gpu_memory_utilization_ppm: 850000
+    max_model_len: 32768
+    max_num_seqs: 512
+    repeats: 2
+  - probe_id: "heldout-util-90-32k"
+    role: "validation"
+    gpu_memory_utilization_ppm: 900000
+    max_model_len: 32768
+    max_num_seqs: 512
+    repeats: 1
+  - probe_id: "extrapolate-context-8k"
+    role: "extrapolation"
+    gpu_memory_utilization_ppm: 900000
+    max_model_len: 8192
+    max_num_seqs: 512
+    repeats: 1
+  - probe_id: "extrapolate-context-16k"
+    role: "extrapolation"
+    gpu_memory_utilization_ppm: 900000
+    max_model_len: 16384
+    max_num_seqs: 512
+    repeats: 1
+
+deployment_distribution:
+  bins:
+    - name: "short-8k"
+      weight_ppm: 500000
+      prompt_tokens: 8064
+      reserved_output_tokens: 128
+    - name: "medium-16k"
+      weight_ppm: 300000
+      prompt_tokens: 16256
+      reserved_output_tokens: 128
+    - name: "long-32k"
+      weight_ppm: 200000
+      prompt_tokens: 32640
+      reserved_output_tokens: 128
+  confidence_ppm: 990000
+  iid_assumption: true
+  assume_no_prefix_reuse: true
+
+safety:
+  fixed_operational_reserve_bytes: 268435456
+  kv_reserve_basis_points: 500
+  calibration_residual_upper_bytes: 0
+  source: "M1 preregistered 256 MiB + 5% KV reserve"
