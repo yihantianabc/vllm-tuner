@@ -203,6 +203,63 @@ async def test_trial_controller_writes_complete_evidence(tmp_path) -> None:
     store.validate_trial_artifacts("trial-0", require_telemetry=True)
 
 
+def test_trial_controller_uses_independent_warmup_trace(tmp_path) -> None:
+    controller, store = make_controller(tmp_path)
+    warmup = WorkloadTrace(
+        seed=2,
+        profile="chat-warmup",
+        entries=[
+            TraceEntry(
+                request_id="warmup-source-000000",
+                scheduled_offset_seconds=0,
+                prompt="independent warmup prompt",
+                input_tokens=10,
+                output_tokens=4,
+                profile="chat-warmup",
+            )
+        ],
+    )
+    isolated = TrialController(
+        controller.config,
+        controller.trace,
+        store,
+        tokenizer=FakeTokenizer(),
+        server_factory=FakeServer,
+        official_adapter=FakeOfficialAdapter(),
+        warmup_trace=warmup,
+    )
+
+    measured_specs = isolated._request_specs()
+    warmup_specs = isolated._request_specs(isolated.warmup_trace)
+    assert measured_specs[0].prompt == "hello"
+    assert warmup_specs[0].prompt == "independent warmup prompt"
+    assert measured_specs[0].prompt != warmup_specs[0].prompt
+
+
+def test_strict_open_loop_requires_no_client_admission_queue(tmp_path) -> None:
+    controller, store = make_controller(tmp_path)
+    repeated = WorkloadTrace(
+        seed=1,
+        profile="chat",
+        entries=[
+            controller.trace.entries[0].model_copy(update={"request_id": f"chat-{index:06d}"})
+            for index in range(2)
+        ],
+    )
+    controller.config.workload.max_concurrency = 1
+
+    with pytest.raises(ValueError, match="max_concurrency"):
+        TrialController(
+            controller.config,
+            repeated,
+            store,
+            tokenizer=FakeTokenizer(),
+            server_factory=FakeServer,
+            official_adapter=FakeOfficialAdapter(),
+            strict_open_loop=True,
+        )
+
+
 def test_missing_custom_scheduler_decision_log_gets_explicit_marker(tmp_path) -> None:
     controller, store = make_controller(tmp_path)
     controller.config.vllm_args["scheduler-cls"] = (

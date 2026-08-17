@@ -131,6 +131,8 @@ def generate_trace(
     tokenizer: Optional[Any] = None,
     fixed_input_tokens: Optional[int] = None,
     fixed_output_tokens: Optional[int] = None,
+    request_index_offset: int = 0,
+    request_id_prefix: Optional[str] = None,
 ) -> WorkloadTrace:
     """Create a deterministic trace; callers persist it once and reuse it for all trials."""
     if count <= 0:
@@ -143,23 +145,29 @@ def generate_trace(
         raise ValueError("fixed_input_tokens must be positive")
     if fixed_output_tokens is not None and fixed_output_tokens <= 0:
         raise ValueError("fixed_output_tokens must be positive")
+    if request_index_offset < 0:
+        raise ValueError("request_index_offset must be non-negative")
+    if request_id_prefix is not None and not request_id_prefix:
+        raise ValueError("request_id_prefix must not be empty")
     resolved = get_profile(profile) if isinstance(profile, str) else profile
     rng = random.Random(seed)
     offset = 0.0
     entries: list[TraceEntry] = []
     for index in range(count):
+        request_index = request_index_offset + index
         if index:
             offset += _interarrival(rng, request_rate, burstiness)
-        sampled_input, sampled_output = _sample_length(rng, resolved, index)
+        sampled_input, sampled_output = _sample_length(rng, resolved, request_index)
         input_tokens = fixed_input_tokens or sampled_input
         output_tokens = fixed_output_tokens or sampled_output
         shared = rng.random() < resolved.shared_prefix_ratio
         prompt, counted_tokens = _prompt_for_tokens(
-            input_tokens, tokenizer, shared, request_index=index
+            input_tokens, tokenizer, shared, request_index=request_index
         )
+        id_prefix = request_id_prefix or resolved.name
         entries.append(
             TraceEntry(
-                request_id=f"{resolved.name}-{index:06d}",
+                request_id=f"{id_prefix}-{request_index:06d}",
                 scheduled_offset_seconds=round(offset, 9),
                 prompt=prompt,
                 input_tokens=counted_tokens,

@@ -54,9 +54,17 @@ class TrialController:
         tokenizer: Optional[Any] = None,
         server_factory: type[ManagedVLLMServer] = ManagedVLLMServer,
         official_adapter: Optional[VLLMBenchAdapter] = None,
+        warmup_trace: Optional[WorkloadTrace] = None,
+        strict_open_loop: bool = False,
     ) -> None:
+        if strict_open_loop and config.workload.max_concurrency < len(trace.entries):
+            raise ValueError(
+                "strict open-loop replay requires max_concurrency >= measured requests"
+            )
         self.config = config
         self.trace = trace
+        self.warmup_trace = warmup_trace
+        self.strict_open_loop = strict_open_loop
         self.artifacts = artifacts
         self._tokenizer = tokenizer
         self.server_factory = server_factory
@@ -73,7 +81,8 @@ class TrialController:
             )
         return self._tokenizer
 
-    def _request_specs(self) -> list[RequestSpec]:
+    def _request_specs(self, trace: Optional[WorkloadTrace] = None) -> list[RequestSpec]:
+        selected = trace or self.trace
         return [
             RequestSpec(
                 request_id=entry.request_id,
@@ -83,7 +92,7 @@ class TrialController:
                 ignore_eos=self.config.workload.ignore_eos,
                 input_tokens=entry.input_tokens,
             )
-            for entry in self.trace.entries
+            for entry in selected.entries
         ]
 
     def _slo(self) -> SLOThresholds:
@@ -99,12 +108,15 @@ class TrialController:
         warmup_results: list[RequestResult] = []
         if not specs:
             return warmup_results
+        warmup_specs = (
+            self._request_specs(self.warmup_trace) if self.warmup_trace is not None else specs
+        )
         async with httpx.AsyncClient(
             timeout=self.config.workload.request_timeout_seconds,
             trust_env=False,
         ) as http_client:
             for index in range(self.config.workload.warmup_requests):
-                source = specs[index % len(specs)]
+                source = warmup_specs[index % len(warmup_specs)]
                 warmup = RequestSpec(
                     request_id=f"warmup-{index}-{source.request_id}",
                     prompt=source.prompt,
@@ -129,9 +141,18 @@ class TrialController:
         """Replay persisted arrival offsets instead of regenerating traffic per trial."""
         started_at = time.perf_counter_ns()
         semaphore = asyncio.Semaphore(self.config.workload.max_concurrency)
+        limits = (
+            httpx.Limits(
+                max_connections=self.config.workload.max_concurrency,
+                max_keepalive_connections=self.config.workload.max_concurrency,
+            )
+            if self.strict_open_loop
+            else httpx.Limits()
+        )
         async with httpx.AsyncClient(
             timeout=self.config.workload.request_timeout_seconds,
             trust_env=False,
+            limits=limits,
         ) as http_client:
 
             async def execute(index: int, spec: RequestSpec) -> RequestResult:

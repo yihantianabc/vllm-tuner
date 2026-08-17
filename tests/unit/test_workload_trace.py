@@ -47,3 +47,32 @@ def test_shared_requests_have_a_real_common_prefix_without_collapsing_all_prompt
     assert len(shared) >= 2
     assert len({prompt[:128] for prompt in shared}) == 1
     assert len({prompt for prompt in shared + unshared}) == len(shared) + len(unshared)
+
+
+def test_request_index_offset_makes_fixed_length_warmup_prompts_independent() -> None:
+    measured = generate_trace(
+        "chat",
+        count=3,
+        request_rate=1,
+        seed=7,
+        fixed_input_tokens=256,
+        fixed_output_tokens=16,
+    )
+    warmup = generate_trace(
+        "chat",
+        count=3,
+        request_rate=None,
+        seed=8,
+        fixed_input_tokens=256,
+        fixed_output_tokens=16,
+        request_index_offset=1_000_000,
+        request_id_prefix="warmup",
+    )
+
+    assert {entry.input_tokens for entry in warmup.entries} == {256}
+    assert {entry.request_id for entry in measured.entries}.isdisjoint(
+        entry.request_id for entry in warmup.entries
+    )
+    assert {entry.prompt for entry in measured.entries}.isdisjoint(
+        entry.prompt for entry in warmup.entries
+    )
