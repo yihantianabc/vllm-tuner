@@ -1017,6 +1017,72 @@ def longctx_m1_capacity(
         raise typer.Exit(1)
 
 
+@app.command("longctx-m1-capacity-boundaries")
+def longctx_m1_capacity_boundaries(
+    artifact_root: str = typer.Option(
+        "/root/autodl-tmp/longctx-v5-artifacts",
+        "--artifact-root",
+        help="Root containing the sealed source and derived M1 artifacts",
+    ),
+    source_experiment_id: str = typer.Option(
+        "longctx-v5-m1-capacity-formal-001",
+        "--source-experiment-id",
+        help="Immutable sealed v1 formal capacity experiment",
+    ),
+    experiment_id: str = typer.Option(
+        "longctx-v5-m1-capacity-formal-001-boundaries-v2",
+        "--experiment-id",
+        "-n",
+        help="Fresh zero-GPU M1 v2 boundary artifact directory name",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Validate and replay an existing sealed v2 boundary artifact",
+    ),
+):
+    """Derive separate SLO service and joint saturation boundaries from sealed M1 data."""
+    try:
+        from vllm_tuner.longctx.m1_capacity_reanalysis import M1CapacityBoundaryRunner
+
+        runner = M1CapacityBoundaryRunner(
+            artifact_root,
+            source_experiment_id,
+            experiment_id,
+            repository=Path(__file__).resolve().parents[3],
+            resume=resume,
+        )
+        summary = runner.run()
+        source_acceptance = summary.get("source_v1_acceptance", {})
+        acceptance = summary.get("acceptance", {})
+        artifacts = summary.get("artifacts", {})
+        source_passed = (
+            isinstance(source_acceptance, Mapping) and source_acceptance.get("passed") is True
+        )
+        passed = isinstance(acceptance, Mapping) and acceptance.get("passed") is True
+        typer.echo(f"Source v1 acceptance preserved: {'PASS' if source_passed else 'FAIL'}")
+        typer.echo(f"M1 v2 boundary acceptance: {'PASS' if passed else 'FAIL'}")
+        typer.echo(f"GPU runs executed: {summary.get('gpu_runs_executed', 'unavailable')}")
+        artifact_path = (
+            artifacts.get("root", runner.store.root)
+            if isinstance(artifacts, Mapping)
+            else runner.store.root
+        )
+        typer.echo(f"Artifacts: {artifact_path}")
+        typer.echo("M2 was not started; review the independent M1 milestone result first.")
+        if not passed:
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except (FileNotFoundError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+    except Exception as error:
+        logger.error("Long-context M1 boundary analysis failed: %s", error, exc_info=True)
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+
+
 def _longctx_status_value(value: object) -> str:
     """Format nested status values predictably for shell operators."""
     if value is None:

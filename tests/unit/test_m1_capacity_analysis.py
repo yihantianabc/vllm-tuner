@@ -14,6 +14,7 @@ from vllm_tuner.longctx.m1_capacity_analysis import (
     LatencyPercentiles,
     analyze_capacity_sweep,
 )
+from vllm_tuner.longctx.m1_capacity_boundaries import derive_capacity_boundaries
 
 
 def _policy(**overrides: object) -> CapacityKneePolicy:
@@ -347,3 +348,99 @@ def test_strict_schema_rejects_bad_latency_and_duplicate_repeat() -> None:
     duplicate = trials[0].model_copy(update={"trial_id": "different-id"})
     with pytest.raises(ValueError, match="duplicate capacity repeat"):
         analyze_capacity_sweep([*trials, duplicate], _policy())
+
+
+def test_v2_boundaries_preserve_a_joint_v1_knee() -> None:
+    source = analyze_capacity_sweep(_valid_sweep(), _policy())
+
+    derived = derive_capacity_boundaries(source)
+
+    assert derived.accepted is True
+    context = derived.contexts[0]
+    assert context.slo_service_boundary.status == "bracketed"
+    assert context.slo_service_boundary.last_stable is not None
+    assert context.slo_service_boundary.last_stable.load_id == "mid"
+    assert context.slo_service_boundary.first_slo_goodput_breach is not None
+    assert context.slo_service_boundary.first_slo_goodput_breach.load_id == "high"
+    assert context.joint_saturation_boundary.status == "bracketed"
+    assert context.joint_saturation_boundary.last_pre_saturation is not None
+    assert context.joint_saturation_boundary.last_pre_saturation.load_id == "mid"
+
+
+def test_v2_separates_transitional_slo_breach_from_later_saturation() -> None:
+    trials = _valid_sweep()
+    trials = [
+        (
+            trial.model_copy(
+                update={
+                    "goodput_requests_per_second": 1.0,
+                    "slo_satisfied_fraction": 0.50,
+                }
+            )
+            if trial.load_id == "mid"
+            else trial
+        )
+        for trial in trials
+    ]
+    source = analyze_capacity_sweep(trials, _policy())
+
+    derived = derive_capacity_boundaries(source)
+
+    assert source.passed is False
+    assert source.contexts[0].points[1].classification == "transitional"
+    assert "stable_and_first_overload_are_not_adjacent" in (source.contexts[0].knee.failure_reasons)
+    context = derived.contexts[0]
+    assert context.accepted is True
+    assert context.slo_service_boundary.last_stable is not None
+    assert context.slo_service_boundary.last_stable.load_id == "low"
+    assert context.slo_service_boundary.first_slo_goodput_breach is not None
+    assert context.slo_service_boundary.first_slo_goodput_breach.load_id == "mid"
+    assert context.joint_saturation_boundary.last_pre_saturation is not None
+    assert context.joint_saturation_boundary.last_pre_saturation.load_id == "mid"
+    assert context.joint_saturation_boundary.first_joint_overload is not None
+    assert context.joint_saturation_boundary.first_joint_overload.load_id == "high"
+
+
+def test_v2_accepts_preregistered_left_censored_service_boundary() -> None:
+    trials = _valid_sweep()
+    trials = [
+        (
+            trial.model_copy(
+                update={
+                    "goodput_requests_per_second": 0.20,
+                    "slo_satisfied_fraction": 0.50,
+                }
+            )
+            if trial.load_id in {"low", "mid"}
+            else trial
+        )
+        for trial in trials
+    ]
+    source = analyze_capacity_sweep(trials, _policy())
+
+    derived = derive_capacity_boundaries(source)
+
+    assert source.passed is False
+    assert "no_stable_point_before_first_overload" in source.contexts[0].knee.failure_reasons
+    context = derived.contexts[0]
+    assert context.accepted is True
+    assert context.slo_service_boundary.status == "left-censored-below-lowest-load"
+    assert context.slo_service_boundary.last_stable is None
+    assert context.slo_service_boundary.first_slo_goodput_breach is not None
+    assert context.slo_service_boundary.first_slo_goodput_breach.load_id == "low"
+    assert context.joint_saturation_boundary.status == "bracketed"
+
+
+def test_v2_rejects_ineligible_capacity_evidence() -> None:
+    trials = [
+        trial
+        for trial in _valid_sweep()
+        if not (trial.load_id == "mid" and trial.repeat_index == 2)
+    ]
+    source = analyze_capacity_sweep(trials, _policy())
+
+    derived = derive_capacity_boundaries(source)
+
+    assert derived.accepted is False
+    assert derived.contexts[0].all_points_eligible is False
+    assert "not_all_capacity_points_are_eligible" in derived.contexts[0].failure_reasons
