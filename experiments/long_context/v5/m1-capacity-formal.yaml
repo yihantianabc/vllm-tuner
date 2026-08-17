@@ -1,0 +1,120 @@
+project_line: "longctx-v5"
+milestone: "M1"
+experiment_kind: "capacity-sweep"
+evidence_role: "formal"
+
+model:
+  local_path: "/root/autodl-tmp/models/Qwen2.5-7B-Instruct"
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/qwen25-7b-instruct.model.lock.yaml"
+
+runtime:
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/upstream-runtime.lock.yaml"
+
+artifacts:
+  root: "/root/autodl-tmp/longctx-v5-artifacts"
+
+gpu:
+  device_ids: [0]
+  count: 1
+
+initialization_artifact:
+  experiment_id: "longctx-v5-m1-planner-init-002"
+  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m1-planner-init-002"
+
+server_profile:
+  name: "production-default"
+  expected_gpu_memory_utilization_ppm: 900000
+  expected_max_model_len: 32768
+  expected_max_num_seqs: 256
+  expected_max_num_batched_tokens: 2048
+  expected_model_dtype: "torch.bfloat16"
+  expected_kv_cache_dtype: "auto"
+  expected_attention_backend: "FLASH_ATTN"
+  expected_enable_prefix_caching: true
+  expected_enable_chunked_prefill: true
+  expected_block_size: 16
+  inherit_upstream_defaults: true
+
+# Frozen from longctx-v5-m1-capacity-pilot-001 before formal execution.
+# Middle points were stable; high points showed throughput saturation, positive
+# queue growth, preemption, and materially worse latency. SLOs lie above the
+# stable-point p99 and below the overload-point median for the dominant metric.
+contexts:
+  - context_id: "context-8k"
+    total_kv_tokens: 8192
+    output_tokens: 128
+    loads:
+      - load_id: "low"
+        offered_requests_per_second: 0.8
+      - load_id: "mid"
+        offered_requests_per_second: 1.0
+      - load_id: "high"
+        offered_requests_per_second: 2.0
+    slo:
+      ttft_ms: 3500.0
+      tpot_ms: 120.0
+      e2e_ms: 16000.0
+      max_error_rate_ppm: 0
+  - context_id: "context-16k"
+    total_kv_tokens: 16384
+    output_tokens: 128
+    loads:
+      - load_id: "low"
+        offered_requests_per_second: 0.4
+      - load_id: "mid"
+        offered_requests_per_second: 0.5
+      - load_id: "high"
+        offered_requests_per_second: 1.0
+    slo:
+      ttft_ms: 4500.0
+      tpot_ms: 80.0
+      e2e_ms: 12000.0
+      max_error_rate_ppm: 0
+  - context_id: "context-32k"
+    total_kv_tokens: 32768
+    output_tokens: 128
+    loads:
+      - load_id: "low"
+        offered_requests_per_second: 0.2
+      - load_id: "mid"
+        offered_requests_per_second: 0.25
+      - load_id: "high"
+        offered_requests_per_second: 0.5
+    slo:
+      ttft_ms: 12000.0
+      tpot_ms: 160.0
+      e2e_ms: 26000.0
+      max_error_rate_ppm: 0
+
+protocol:
+  repeats: 3
+  measurement_seconds: 180
+  minimum_measured_requests: 100
+  warmup_requests: 4
+  warmup_seed: 2026081821
+  measurement_seed: 2026081822
+  warmup_prompt_index_offset: 1000000
+  client_max_concurrency: 512
+  request_timeout_seconds: 600.0
+  burstiness: 1.0
+  ignore_eos: true
+
+knee_policy:
+  repeat_aggregation: "median"
+  minimum_valid_repeats: 3
+  throughput_plateau_max_gain_ppm: 450000
+  queue_growth_min_requests_per_second: 0.05
+  minimum_peak_waiting_requests: 5
+  minimum_slo_attainment_ppm: 950000
+  minimum_achieved_to_offered_ppm: 900000
+  minimum_completion_ppm: 1000000
+  max_p99_dispatch_delay_ms: 250.0
+  maximum_preemptions_for_stable: 0
+  maximum_timeouts_for_stable: 0
+  require_zero_oom_events: true
+  minimum_joint_signal_repeats: 3
+  required_prefix_cache_hits_delta: 0
+  overload_rule: "throughput-plateau-and-positive-queue-growth-and-slo-failure"
+  selection_rule: "highest-stable-load-before-first-joint-overload"
+  no_overload_result: "right-censored-above-highest-load"
+  below_lowest_result: "left-censored-below-lowest-load"
