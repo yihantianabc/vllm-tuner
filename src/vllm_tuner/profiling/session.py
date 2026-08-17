@@ -79,6 +79,7 @@ class TelemetrySession:
         prometheus_collector: Optional[PrometheusCollector] = None,
         nvml_session: Optional[NVMLSession] = None,
         enable_nvml: bool = True,
+        include_raw_prometheus: bool = False,
         client_metrics: Optional[Mapping[str, Any]] = None,
         monotonic_ns: Callable[[], int] = time.perf_counter_ns,
         wall_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
@@ -111,7 +112,7 @@ class TelemetrySession:
             raise ValueError("provide a collector or an endpoint, not both")
         self.prometheus = prometheus_collector
         if self.prometheus is None and endpoint is not None:
-            self.prometheus = PrometheusCollector(endpoint)
+            self.prometheus = PrometheusCollector(endpoint, include_raw=include_raw_prometheus)
 
         if nvml_session is not None and not enable_nvml:
             raise ValueError("nvml_session cannot be supplied when enable_nvml is false")

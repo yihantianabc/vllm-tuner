@@ -493,6 +493,7 @@ class TrialController:
                 sample_interval=self.config.telemetry.interval_ms / 1000.0,
                 output_path=trial_dir / "telemetry.jsonl",
                 enable_nvml=self.config.telemetry.collect_nvml,
+                include_raw_prometheus=self.strict_open_loop,
             )
             if self.config.telemetry.enabled:
                 await telemetry.start()
