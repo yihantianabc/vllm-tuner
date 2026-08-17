@@ -793,6 +793,121 @@ def export(
         raise typer.Exit(1)
 
 
+@app.command("longctx-m0")
+def longctx_m0(
+    config: str = typer.Option(
+        "experiments/long_context/v5/m0-production-default.yaml",
+        "--config",
+        "-c",
+        help="Strict long-context v5 M0 YAML configuration",
+    ),
+    experiment_id: str = typer.Option(
+        "longctx-v5-m0-qwen25-7b-production-default-001",
+        "--experiment-id",
+        "-n",
+        help="Fresh v5 M0 artifact directory name",
+    ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Validate identity and replay a sealed or cached complete M0 trial",
+    ),
+    allow_dirty_source: bool = typer.Option(
+        False,
+        "--allow-dirty-source",
+        help="Development smoke only; a dirty run cannot pass M0 acceptance",
+    ),
+):
+    """Run one isolated 100+ request v5 production-default canary."""
+    try:
+        from vllm_tuner.longctx.m0_config import load_longctx_m0_config
+        from vllm_tuner.longctx.m0_runner import LongContextM0Runner
+
+        config_obj = load_longctx_m0_config(config)
+        runner = LongContextM0Runner(
+            config_obj,
+            experiment_id,
+            repository=Path(__file__).resolve().parents[3],
+            resume=resume,
+            require_clean_source=not allow_dirty_source,
+        )
+        summary = asyncio.run(runner.run())
+        acceptance = summary.get("acceptance", {})
+        is_smoke = config_obj.evidence_role == "smoke"
+        status_key = "execution_passed" if is_smoke else "passed"
+        passed = isinstance(acceptance, Mapping) and acceptance.get(status_key) is True
+        status_label = "Smoke execution status" if is_smoke else "M0 status"
+        typer.echo(f"{status_label}: {'PASS' if passed else 'FAIL'}")
+        if is_smoke:
+            typer.echo("Formal M0 qualification: not applicable to smoke artifacts")
+        typer.echo(f"Trial: {summary.get('trial_id', 'unavailable')}")
+        typer.echo(f"Artifacts: {runner.artifacts.root}")
+        if summary.get("resume_replayed") is True:
+            typer.echo("Resume: sealed artifact replayed; no server was started")
+        elif isinstance(summary.get("resume"), Mapping):
+            typer.echo(
+                "Resume: cached trial replayed"
+                if summary["resume"].get("trial_replayed") is True
+                else "Resume: new trial executed"
+            )
+        if not passed:
+            typer.echo(
+                (
+                    "Smoke execution failed; inspect m0-summary.json."
+                    if is_smoke
+                    else "M0 acceptance failed; inspect m0-summary.json and do not enter M1."
+                ),
+                err=True,
+            )
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except (FileNotFoundError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+    except Exception as error:
+        logger.error("Long-context M0 command failed: %s", error, exc_info=True)
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command("longctx-m0-status")
+def longctx_m0_status(
+    artifact_root: str = typer.Option(
+        "/root/autodl-tmp/longctx-v5-artifacts",
+        "--artifact-root",
+        help="Root containing sealed long-context v5 artifacts",
+    ),
+    experiment_id: str = typer.Option(
+        "longctx-v5-m0-qwen25-7b-production-default-001",
+        "--experiment-id",
+        "-n",
+        help="Existing sealed v5 M0 artifact directory name",
+    ),
+):
+    """Validate and display one sealed v5 M0 artifact root."""
+    try:
+        from vllm_tuner.longctx.m0_runner import load_m0_status
+
+        root = Path(artifact_root).expanduser().resolve()
+        summary = load_m0_status(root, experiment_id)
+        acceptance = summary.get("acceptance", {})
+        is_smoke = summary.get("evidence_role") == "smoke"
+        status_key = "execution_passed" if is_smoke else "passed"
+        passed = isinstance(acceptance, Mapping) and acceptance.get(status_key) is True
+        status_label = "Smoke execution status" if is_smoke else "M0 status"
+        typer.echo(f"{status_label}: {'PASS' if passed else 'FAIL'}")
+        typer.echo(f"Trial: {summary.get('trial_id', 'unavailable')}")
+        typer.echo(f"Artifacts: {root / experiment_id}")
+        if not passed:
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except (FileNotFoundError, ValueError) as error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
+
+
 @app.command()
 def list_studies(
     results_root: str = typer.Option(

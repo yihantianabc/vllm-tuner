@@ -1,0 +1,34 @@
+project_line: "longctx-v5"
+milestone: "M0"
+profile: "production-default"
+evidence_role: "formal"
+model_tier: "primary-7b-8b"
+
+model:
+  local_path: "/root/autodl-tmp/models/Qwen2.5-7B-Instruct"
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/qwen25-7b-instruct.model.lock.yaml"
+
+artifacts:
+  root: "/root/autodl-tmp/longctx-v5-artifacts"
+
+runtime:
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/upstream-runtime.lock.yaml"
+
+gpu:
+  device_ids: [0]
+  count: 1
+
+workload:
+  measured_requests: 128
+  warmup_requests: 8
+  fixed_input_tokens: 2048
+  fixed_output_tokens: 128
+  request_rate: 2.0
+  max_concurrency: 32
+  request_timeout_seconds: 300.0
+  seed: 20260817
+  burstiness: 1.0
+  ignore_eos: true
+
+# Empty by contract: this profile is the actual vLLM 0.16 upstream default.
+vllm_args: {}
