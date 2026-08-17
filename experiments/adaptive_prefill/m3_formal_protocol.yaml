@@ -1,0 +1,82 @@
+# Frozen at the end of M3. This protocol is an experiment matrix, not a TuningConfig.
+schema_version: 1
+frozen_at_utc: "2026-08-17T14:16:00Z"
+pilot_model: "/root/autodl-tmp/models/Qwen2.5-3B-Instruct"
+
+common_server:
+  gpu_memory_utilization: 0.70
+  max_num_batched_tokens: 8192
+  max_num_seqs: 64
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+  max_model_len: 8192
+  async_scheduling: false
+
+policies:
+  stock:
+    scheduler_cls: null
+    adaptive_prefill: {enabled: false}
+  fixed_low:
+    scheduler_cls: "vllm_tuner.scheduler.runtime.AdaptivePrefillScheduler"
+    adaptive_prefill: {enabled: true, fixed_prefill_cap: 1024}
+  fixed_mid:
+    scheduler_cls: "vllm_tuner.scheduler.runtime.AdaptivePrefillScheduler"
+    adaptive_prefill: {enabled: true, fixed_prefill_cap: 4096}
+  fixed_high:
+    scheduler_cls: "vllm_tuner.scheduler.runtime.AdaptivePrefillScheduler"
+    adaptive_prefill: {enabled: true, fixed_prefill_cap: 8192}
+  adaptive:
+    scheduler_cls: "vllm_tuner.scheduler.runtime.AdaptivePrefillScheduler"
+    adaptive_prefill:
+      enabled: true
+      low_prefill_cap: 1024
+      balanced_prefill_cap: 4096
+      high_prefill_cap: 8192
+      decode_backlog_high: 28
+      oldest_prefill_wait_ms: 100
+      kv_usage_high: 0.90
+      min_prefill_progress: 256
+      max_wait_ms: 1000
+      hysteresis_steps: 3
+      min_state_residency_steps: 3
+
+# Capacity plateau was about 8.9 achieved req/s. These are about 67%, 90%, and 107%.
+load_points:
+  low:
+    empirical_requests_per_second: 6.0
+    calibration_trace: "traces/formal/calibration-load-low.jsonl"
+    calibration_sha256: "eb64113c983faa422f695f3bc0a91c7c17f1c6a6e27bbeca10eaea2497960184"
+    heldout_trace: "traces/formal/heldout-load-low.jsonl"
+    heldout_sha256: "a3a1f95a288a4a0dc9fff6b352b9b720b099faccc6d855e903c0692ec6cea223"
+  main:
+    empirical_requests_per_second: 8.0
+    calibration_trace: "traces/formal/calibration-load-main.jsonl"
+    calibration_sha256: "193c4afe8165b0e11267f593d48440cc39a383a1018e209966c58bc0663f5aad"
+    heldout_trace: "traces/formal/heldout-load-main.jsonl"
+    heldout_sha256: "c8aa30ba1af5f5fdf467cba76ac36cba5b2020a26b74db5b8d58819fada84388"
+  stress:
+    empirical_requests_per_second: 9.5
+    calibration_trace: "traces/formal/calibration-load-stress.jsonl"
+    calibration_sha256: "66d0de697fd5bbba904e4813d0b1901319078c2c680e28d9f05e600c4aa7d6be"
+    heldout_trace: "traces/formal/heldout-load-stress.jsonl"
+    heldout_sha256: "696ba2ebb32b8a50c8c2a4d95641132e4b9d65818d2c99d17c8700e2d99933da"
+
+# Derived only from the two stock calibration repetitions, before adaptive-tail28 ran.
+slo_tiers_ms:
+  strict: {ttft: 300, tpot: 12, e2e: 1950}
+  medium: {ttft: 850, tpot: 37, e2e: 3170}
+  loose: {ttft: 1100, tpot: 47, e2e: 3500}
+primary_slo_tier: "medium"
+
+formal_execution:
+  measured_requests_per_trace: 640
+  warmup_requests: 5
+  repeats: 3
+  max_concurrency: 64
+  ignore_eos: true
+  holdout_enabled: true
+  policy_order_randomized_per_repeat: true
+  freeze_policy_parameters: true
+  report_all_slo_tiers: true
+  report_pooled_itl: true
+  offline_oracle_eligible_policies: ["fixed_low", "fixed_mid", "fixed_high"]

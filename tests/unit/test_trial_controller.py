@@ -203,6 +203,20 @@ async def test_trial_controller_writes_complete_evidence(tmp_path) -> None:
     store.validate_trial_artifacts("trial-0", require_telemetry=True)
 
 
+def test_missing_custom_scheduler_decision_log_gets_explicit_marker(tmp_path) -> None:
+    controller, store = make_controller(tmp_path)
+    controller.config.vllm_args["scheduler-cls"] = (
+        "vllm_tuner.scheduler.runtime.AdaptivePrefillScheduler"
+    )
+
+    controller._write_raw_artifacts("missing-decisions", None, None)
+
+    path = store.trial_dir("missing-decisions") / "scheduler-decisions.jsonl"
+    marker = json.loads(path.read_text(encoding="utf-8"))
+    assert marker["available"] is False
+    assert marker["reason"] == "custom Scheduler produced no decision log"
+
+
 @pytest.mark.asyncio
 async def test_cleanup_failure_is_persisted_and_aborts_the_search(tmp_path) -> None:
     controller, store = make_controller(tmp_path, server_factory=CleanupFailingServer)

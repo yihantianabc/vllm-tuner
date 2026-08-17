@@ -34,6 +34,7 @@ EXECUTION_ENV_PREFIXES = (
     "NCCL_",
     "NUMBA_",
     "OMP_",
+    "SLOTUNE_",
     "TOKENIZERS_",
     "TORCH_",
     "TORCHINDUCTOR_",
@@ -64,6 +65,15 @@ SECRET_ENV_MARKERS = (
     "SECRET",
 )
 PROXY_ENV_KEYS = frozenset({"ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"})
+
+SLOTUNE_SCHEDULER_CONFIG_ENV = "SLOTUNE_ADAPTIVE_PREFILL_CONFIG"
+SLOTUNE_SCHEDULER_LOG_ENV = "SLOTUNE_SCHEDULER_DECISION_LOG"
+
+
+def uses_slotune_scheduler(config: TuningConfig) -> bool:
+    """Return whether the configured class is implemented by this repository."""
+    scheduler_cls = config.vllm_args.get("scheduler-cls", config.vllm_args.get("scheduler_cls"))
+    return isinstance(scheduler_cls, str) and scheduler_cls.startswith("vllm_tuner.scheduler.")
 
 
 def port_is_available(host: str, port: int) -> bool:
@@ -238,6 +248,14 @@ class ManagedVLLMServer:
         command = self.build_command(trial_params)
         environment = os.environ.copy()
         environment["CUDA_VISIBLE_DEVICES"] = str(self.config.gpu.device_ids[0])
+        if uses_slotune_scheduler(self.config):
+            environment[SLOTUNE_SCHEDULER_CONFIG_ENV] = (
+                self.config.adaptive_prefill.model_dump_json()
+            )
+            if self.config.adaptive_prefill.decision_log_enabled:
+                environment[SLOTUNE_SCHEDULER_LOG_ENV] = str(
+                    (self.trial_dir / "scheduler-decisions.jsonl").resolve()
+                )
         self.command_path.write_text(
             json.dumps(
                 {"argv": command, "environment": self._safe_environment(environment)},

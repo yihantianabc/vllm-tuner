@@ -1,0 +1,59 @@
+# M0 model bring-up check for Qwen2.5-3B-Instruct with the stock scheduler.
+model: "/root/autodl-tmp/models/Qwen2.5-3B-Instruct"
+
+gpu:
+  device_ids: [0]
+  count: 1
+
+slo:
+  ttft_ms: 10000
+  tpot_ms: 1000
+  e2e_ms: 30000
+
+constraints:
+  max_error_rate: 0.0
+  max_peak_vram_mb: 31000
+  max_memory_utilization: 0.95
+  require_no_oom: true
+  require_server_alive: true
+
+search_space:
+  gpu_memory_utilization: [0.60, 0.60]
+  max_num_batched_tokens: [2048]
+  max_num_seqs: [128]
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+workload:
+  name: "alpaca"
+  dataset_name: "/root/autodl-tmp/vllm-tuner/data/alpaca_smoke.jsonl"
+  sample_size: 2
+  prompt_length_distribution: "uniform"
+  warmup_requests: 1
+  max_concurrency: 1
+  max_tokens: 32
+  seed: 2026
+  benchmark_backend: "sse"
+
+telemetry:
+  enabled: true
+  interval_ms: 200
+  collect_nvml: true
+
+baseline:
+  enabled: false
+
+study:
+  trial_budget: 1
+  timeout_minutes: 20
+  prune_enabled: false
+  n_startup_trials: 1
+  methods: ["default"]
+  repeat_count: 1
+  top_candidates: 1
+  holdout_enabled: false
+  resume: false
+
+vllm_args:
+  max-model-len: 1024
+

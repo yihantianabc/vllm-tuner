@@ -1,0 +1,126 @@
+{
+  "phase_gap_seconds": 0.05,
+  "schema_version": 1,
+  "seed": 2026,
+  "tokenizer": "/root/autodl-tmp/models/Qwen2.5-3B-Instruct",
+  "traces": {
+    "calibration": {
+      "boundaries": [
+        {
+          "end_seconds": 1.045160539,
+          "phase": "decode_heavy",
+          "requests": 12,
+          "start_seconds": 0.0
+        },
+        {
+          "end_seconds": 1.313813027,
+          "phase": "long_prefill_burst",
+          "requests": 8,
+          "start_seconds": 1.095160539
+        },
+        {
+          "end_seconds": 2.267158698,
+          "phase": "mixed",
+          "requests": 12,
+          "start_seconds": 1.363813027
+        }
+      ],
+      "file": "calibration.jsonl",
+      "phase_config": [
+        {
+          "burstiness": 1.0,
+          "count": 12,
+          "fixed_input_tokens": 256,
+          "fixed_output_tokens": 256,
+          "name": "decode_heavy",
+          "request_rate": 12.0,
+          "source_profile": "chat"
+        },
+        {
+          "burstiness": 0.4,
+          "count": 8,
+          "fixed_input_tokens": 4096,
+          "fixed_output_tokens": 32,
+          "name": "long_prefill_burst",
+          "request_rate": 32.0,
+          "source_profile": "rag"
+        },
+        {
+          "burstiness": 1.2,
+          "count": 12,
+          "fixed_input_tokens": null,
+          "fixed_output_tokens": null,
+          "name": "mixed",
+          "request_rate": 12.0,
+          "source_profile": "mixed"
+        }
+      ],
+      "phase_order": [
+        "decode_heavy",
+        "long_prefill_burst",
+        "mixed"
+      ],
+      "requests": 32,
+      "sha256": "e14dbc99d555b236ed919c64a1fbc36e8a534d5f228b447999ad4a0cc54570fd"
+    },
+    "heldout": {
+      "boundaries": [
+        {
+          "end_seconds": 0.218652488,
+          "phase": "long_prefill_burst",
+          "requests": 8,
+          "start_seconds": 0.0
+        },
+        {
+          "end_seconds": 1.171998159,
+          "phase": "mixed",
+          "requests": 12,
+          "start_seconds": 0.268652488
+        },
+        {
+          "end_seconds": 2.267158698,
+          "phase": "decode_heavy",
+          "requests": 12,
+          "start_seconds": 1.221998159
+        }
+      ],
+      "file": "heldout.jsonl",
+      "phase_config": [
+        {
+          "burstiness": 0.4,
+          "count": 8,
+          "fixed_input_tokens": 4096,
+          "fixed_output_tokens": 32,
+          "name": "long_prefill_burst",
+          "request_rate": 32.0,
+          "source_profile": "rag"
+        },
+        {
+          "burstiness": 1.2,
+          "count": 12,
+          "fixed_input_tokens": null,
+          "fixed_output_tokens": null,
+          "name": "mixed",
+          "request_rate": 12.0,
+          "source_profile": "mixed"
+        },
+        {
+          "burstiness": 1.0,
+          "count": 12,
+          "fixed_input_tokens": 256,
+          "fixed_output_tokens": 256,
+          "name": "decode_heavy",
+          "request_rate": 12.0,
+          "source_profile": "chat"
+        }
+      ],
+      "phase_order": [
+        "long_prefill_burst",
+        "mixed",
+        "decode_heavy"
+      ],
+      "requests": 32,
+      "sha256": "385496f7401a7029572980fac823c5a3ebda65eba724d57b174fefadcd5b37ee"
+    }
+  }
+}

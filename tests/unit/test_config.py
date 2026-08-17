@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from vllm_tuner.config.models import (
+    AdaptivePrefillConfig,
     BaselineConfig,
     Constraints,
     GPUConfig,
@@ -80,6 +81,28 @@ def test_study_settings_use_equal_trial_budget() -> None:
 
 def test_baseline_can_be_disabled() -> None:
     assert BaselineConfig(enabled=False).enabled is False
+
+
+def test_adaptive_prefill_config_validates_ordered_caps_and_waits() -> None:
+    config = AdaptivePrefillConfig(
+        low_prefill_cap=512,
+        balanced_prefill_cap=1024,
+        high_prefill_cap=2048,
+        min_prefill_progress=256,
+        oldest_prefill_wait_ms=100,
+        max_wait_ms=500,
+    )
+    assert config.enabled is False
+    assert config.decision_log_enabled is True
+    assert config.fixed_prefill_cap is None
+    with pytest.raises(ValidationError, match="prefill caps"):
+        AdaptivePrefillConfig(low_prefill_cap=2048, balanced_prefill_cap=1024)
+    with pytest.raises(ValidationError, match="min_prefill_progress"):
+        AdaptivePrefillConfig(low_prefill_cap=128, min_prefill_progress=256)
+    with pytest.raises(ValidationError, match="max_wait_ms"):
+        AdaptivePrefillConfig(oldest_prefill_wait_ms=500, max_wait_ms=100)
+    with pytest.raises(ValidationError, match="requires"):
+        AdaptivePrefillConfig(enabled=False, fixed_prefill_cap=512)
 
 
 def test_tuning_config_rejects_multi_gpu() -> None:

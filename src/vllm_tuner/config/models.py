@@ -236,6 +236,42 @@ class BaselineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AdaptivePrefillConfig(BaseModel):
+    """Runtime policy and instrumentation settings for the V1 Scheduler."""
+
+    enabled: bool = False
+    fixed_prefill_cap: Optional[int] = Field(default=None, ge=1)
+    decision_log_enabled: bool = True
+    low_prefill_cap: int = Field(default=1024, ge=1)
+    balanced_prefill_cap: int = Field(default=4096, ge=1)
+    high_prefill_cap: int = Field(default=8192, ge=1)
+    decode_backlog_high: int = Field(default=32, ge=1)
+    oldest_prefill_wait_ms: float = Field(default=200.0, gt=0)
+    kv_usage_high: float = Field(default=0.90, gt=0.0, le=1.0)
+    min_prefill_progress: int = Field(default=256, ge=1)
+    max_wait_ms: float = Field(default=1000.0, gt=0)
+    hysteresis_steps: int = Field(default=3, ge=1)
+    min_state_residency_steps: int = Field(default=3, ge=1)
+
+    @model_validator(mode="after")
+    def validate_caps_and_waits(self) -> "AdaptivePrefillConfig":
+        """Keep controller levels ordered and starvation thresholds coherent."""
+        if not self.low_prefill_cap <= self.balanced_prefill_cap <= self.high_prefill_cap:
+            raise ValueError(
+                "prefill caps must satisfy low_prefill_cap <= balanced_prefill_cap "
+                "<= high_prefill_cap"
+            )
+        if self.min_prefill_progress > self.low_prefill_cap:
+            raise ValueError("min_prefill_progress must not exceed low_prefill_cap")
+        if self.max_wait_ms < self.oldest_prefill_wait_ms:
+            raise ValueError("max_wait_ms must be at least oldest_prefill_wait_ms")
+        if not self.enabled and self.fixed_prefill_cap is not None:
+            raise ValueError("fixed_prefill_cap requires adaptive_prefill.enabled=true")
+        return self
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class TuningConfig(BaseModel):
     """Top-level SLOTune experiment configuration."""
 
@@ -250,6 +286,7 @@ class TuningConfig(BaseModel):
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     study: StudySettings = Field(default_factory=StudySettings)
     baseline: BaselineConfig = Field(default_factory=BaselineConfig)
+    adaptive_prefill: AdaptivePrefillConfig = Field(default_factory=AdaptivePrefillConfig)
     vllm_args: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")

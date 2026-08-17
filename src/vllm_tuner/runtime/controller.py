@@ -36,6 +36,7 @@ from vllm_tuner.workloads.trace import WorkloadTrace
 
 from .failures import FailureReason, FailureType, UnsafeCleanupError, classify_failure
 from .server import ManagedVLLMServer
+from .server import uses_slotune_scheduler
 from .state_machine import TrialStateMachine
 
 logger = logging.getLogger(__name__)
@@ -389,6 +390,22 @@ class TrialController:
             ]
         self.artifacts.write_jsonl(base / "prometheus.jsonl", engine_rows)
         self.artifacts.write_jsonl(base / "nvml.jsonl", gpu_rows)
+        decision_path = self.artifacts.trial_dir(trial_id) / "scheduler-decisions.jsonl"
+        if (
+            uses_slotune_scheduler(self.config)
+            and self.config.adaptive_prefill.decision_log_enabled
+            and not decision_path.exists()
+        ):
+            self.artifacts.write_jsonl(
+                base / "scheduler-decisions.jsonl",
+                [
+                    {
+                        "record_type": "availability",
+                        "available": False,
+                        "reason": "custom Scheduler produced no decision log",
+                    }
+                ],
+            )
 
     async def run_trial(self, params: dict[str, Any], trial_id: str, method: str) -> TrialResult:
         """Execute START through terminal status, always cleaning the process group."""

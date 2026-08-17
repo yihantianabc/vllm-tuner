@@ -31,6 +31,7 @@ TRIAL_ARTIFACT_FILES = (
     "cleanup.json",
     "summary.json",
 )
+OPTIONAL_TRIAL_ARTIFACT_FILES = ("scheduler-decisions.jsonl",)
 
 ARTIFACT_STATUS_FILE = "artifact-status.json"
 ARTIFACT_INTEGRITY_FILE = "artifact-integrity.json"
@@ -319,6 +320,9 @@ class ArtifactStore:
         directory = self.trial_dir(result.trial_id)
         base = Path("trials") / result.trial_id
         relative_paths = {name: str(base / name) for name in TRIAL_ARTIFACT_FILES}
+        for name in OPTIONAL_TRIAL_ARTIFACT_FILES:
+            if (directory / name).exists():
+                relative_paths[name] = str(base / name)
         relative_paths[ARTIFACT_STATUS_FILE] = str(base / ARTIFACT_STATUS_FILE)
         relative_paths[ARTIFACT_INTEGRITY_FILE] = str(base / ARTIFACT_INTEGRITY_FILE)
         result.artifacts.update(relative_paths)
@@ -334,9 +338,14 @@ class ArtifactStore:
             "nvml.jsonl",
             "server.log",
             "cleanup.json",
+            *OPTIONAL_TRIAL_ARTIFACT_FILES,
         }
         files: dict[str, dict[str, Any]] = {}
-        for name in TRIAL_ARTIFACT_FILES:
+        artifact_files = [
+            *TRIAL_ARTIFACT_FILES,
+            *(name for name in OPTIONAL_TRIAL_ARTIFACT_FILES if (directory / name).exists()),
+        ]
+        for name in artifact_files:
             path = directory / name
             present = path.exists()
             size_bytes = path.stat().st_size if present else None

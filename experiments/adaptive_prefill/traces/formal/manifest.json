@@ -1,0 +1,169 @@
+{
+  "count_multiplier": 20,
+  "phase_gap_seconds": 0.05,
+  "schema_version": 1,
+  "seed": 2026,
+  "tokenizer": "/root/autodl-tmp/models/Qwen2.5-3B-Instruct",
+  "traces": {
+    "calibration": {
+      "boundaries": [
+        {
+          "end_seconds": 18.908994307,
+          "phase": "decode_heavy",
+          "requests": 240,
+          "start_seconds": 0.0
+        },
+        {
+          "end_seconds": 23.940178724,
+          "phase": "long_prefill_burst",
+          "requests": 160,
+          "start_seconds": 18.958994307
+        },
+        {
+          "end_seconds": 45.055123288,
+          "phase": "mixed",
+          "requests": 240,
+          "start_seconds": 23.990178724
+        }
+      ],
+      "empirical_requests_per_second": 14.18262682171356,
+      "file": "calibration.jsonl",
+      "phase_config": [
+        {
+          "burstiness": 1.0,
+          "count": 240,
+          "fixed_input_tokens": 256,
+          "fixed_output_tokens": 256,
+          "name": "decode_heavy",
+          "request_rate": 12.0,
+          "source_profile": "chat"
+        },
+        {
+          "burstiness": 0.4,
+          "count": 160,
+          "fixed_input_tokens": 4096,
+          "fixed_output_tokens": 32,
+          "name": "long_prefill_burst",
+          "request_rate": 32.0,
+          "source_profile": "rag"
+        },
+        {
+          "burstiness": 1.2,
+          "count": 240,
+          "fixed_input_tokens": null,
+          "fixed_output_tokens": null,
+          "name": "mixed",
+          "request_rate": 12.0,
+          "source_profile": "mixed"
+        }
+      ],
+      "phase_order": [
+        "decode_heavy",
+        "long_prefill_burst",
+        "mixed"
+      ],
+      "requests": 640,
+      "scaled_loads": {
+        "low": {
+          "empirical_requests_per_second": 6.0,
+          "file": "calibration-load-low.jsonl",
+          "sha256": "eb64113c983faa422f695f3bc0a91c7c17f1c6a6e27bbeca10eaea2497960184",
+          "target_requests_per_second": 6.0
+        },
+        "main": {
+          "empirical_requests_per_second": 8.0,
+          "file": "calibration-load-main.jsonl",
+          "sha256": "193c4afe8165b0e11267f593d48440cc39a383a1018e209966c58bc0663f5aad",
+          "target_requests_per_second": 8.0
+        },
+        "stress": {
+          "empirical_requests_per_second": 9.499999999962832,
+          "file": "calibration-load-stress.jsonl",
+          "sha256": "66d0de697fd5bbba904e4813d0b1901319078c2c680e28d9f05e600c4aa7d6be",
+          "target_requests_per_second": 9.5
+        }
+      },
+      "sha256": "cdb56abd8b6ae48d8655cf1a4a4ca8f68a0d88938b1a16feac3f205227139b7e"
+    },
+    "heldout": {
+      "boundaries": [
+        {
+          "end_seconds": 4.981184417,
+          "phase": "long_prefill_burst",
+          "requests": 160,
+          "start_seconds": 0.0
+        },
+        {
+          "end_seconds": 26.096128981,
+          "phase": "mixed",
+          "requests": 240,
+          "start_seconds": 5.031184417
+        },
+        {
+          "end_seconds": 45.055123288,
+          "phase": "decode_heavy",
+          "requests": 240,
+          "start_seconds": 26.146128981
+        }
+      ],
+      "empirical_requests_per_second": 14.18262682171356,
+      "file": "heldout.jsonl",
+      "phase_config": [
+        {
+          "burstiness": 0.4,
+          "count": 160,
+          "fixed_input_tokens": 4096,
+          "fixed_output_tokens": 32,
+          "name": "long_prefill_burst",
+          "request_rate": 32.0,
+          "source_profile": "rag"
+        },
+        {
+          "burstiness": 1.2,
+          "count": 240,
+          "fixed_input_tokens": null,
+          "fixed_output_tokens": null,
+          "name": "mixed",
+          "request_rate": 12.0,
+          "source_profile": "mixed"
+        },
+        {
+          "burstiness": 1.0,
+          "count": 240,
+          "fixed_input_tokens": 256,
+          "fixed_output_tokens": 256,
+          "name": "decode_heavy",
+          "request_rate": 12.0,
+          "source_profile": "chat"
+        }
+      ],
+      "phase_order": [
+        "long_prefill_burst",
+        "mixed",
+        "decode_heavy"
+      ],
+      "requests": 640,
+      "scaled_loads": {
+        "low": {
+          "empirical_requests_per_second": 6.0,
+          "file": "heldout-load-low.jsonl",
+          "sha256": "a3a1f95a288a4a0dc9fff6b352b9b720b099faccc6d855e903c0692ec6cea223",
+          "target_requests_per_second": 6.0
+        },
+        "main": {
+          "empirical_requests_per_second": 8.0,
+          "file": "heldout-load-main.jsonl",
+          "sha256": "c8aa30ba1af5f5fdf467cba76ac36cba5b2020a26b74db5b8d58819fada84388",
+          "target_requests_per_second": 8.0
+        },
+        "stress": {
+          "empirical_requests_per_second": 9.499999999962832,
+          "file": "heldout-load-stress.jsonl",
+          "sha256": "696ba2ebb32b8a50c8c2a4d95641132e4b9d65818d2c99d17c8700e2d99933da",
+          "target_requests_per_second": 9.5
+        }
+      },
+      "sha256": "83960a15863dcd5121502b2f43be85644ba34a127c024cd1e33b90bec62d5742"
+    }
+  }
+}

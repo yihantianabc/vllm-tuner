@@ -1,0 +1,27 @@
+# Frozen upstream/runtime identity for the adaptive-prefill scheduler work.
+vllm:
+  version: "0.16.0"
+  upstream_repository: "https://github.com/vllm-project/vllm.git"
+  tag: "v0.16.0"
+  tag_commit: "89a77b10846fd96273cce78d86d2556ea582d26e"
+  installation: "PyPI wheel installed by uv"
+  wheel_record_sha256: "4459a20d70ea50bf6bc30ef653375a32d4ec2a20effd78ccd46b88557b4c36a4"
+  source_files:
+    vllm/config/scheduler.py: "3935dc3507f429ecbdd0f20985fa527fa1d72635eee205e709471c74fbce3d90"
+    vllm/v1/core/sched/interface.py: "6faf9113999a5ab134a3b78d6316b8161fe52b0b79c00f6258224202913e4588"
+    vllm/v1/core/sched/scheduler.py: "bb36be85a1054cdbfedb35c1f04ee02696d9f94a076f7829e9da0bb4f7987d07"
+    vllm/v1/request.py: "eda13a87ca2f12d8ab6fb1ed7349f73aba31187453cbc5980e80e944a6f994d8"
+  slotune_patch:
+    file: "0001-add-prefill-token-budget-hook.patch"
+    patched_scheduler_sha256: "ed1b8dc7816a48b69710631e67d929f6d4c3870ce868f422cd820389bd08731c"
+
+runtime:
+  python: "3.12.3"
+  torch: "2.9.1+cu130"
+  cuda: "13.0"
+  transformers: "4.57.6"
+  flashinfer_python: "0.6.3"
+  nvidia_driver: "595.71.05"
+  gpu: "NVIDIA GeForce RTX 5090"
+  gpu_memory_mib: 32607
+  compute_capability: "12.0"

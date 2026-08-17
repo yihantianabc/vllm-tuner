@@ -529,6 +529,10 @@ def test_trial_integrity_seals_dynamic_capacity_and_telemetry_files(tmp_path) ->
         {"offered_requests_per_sec": 4.0, "repeat": 0, "trace_sha256": "trace-hash"},
     )
     store.write_jsonl(f"{base}/telemetry.jsonl", [{"sample": 1}])
+    store.write_jsonl(
+        f"{base}/scheduler-decisions.jsonl",
+        [{"step_index": 0, "controller_state": "DISABLED"}],
+    )
 
     store.seal_trial_artifacts(result)
     integrity = json.loads(
@@ -540,7 +544,11 @@ def test_trial_integrity_seals_dynamic_capacity_and_telemetry_files(tmp_path) ->
         "capacity-trace.sha256",
         "capacity-point.json",
         "telemetry.jsonl",
+        "scheduler-decisions.jsonl",
     }.issubset(integrity["files"])
+    summary = store.load_trial_result(result.trial_id)
+    assert summary is not None
+    assert summary.artifacts["scheduler-decisions.jsonl"].endswith("/scheduler-decisions.jsonl")
     store.validate_trial_integrity(result.trial_id)
 
     store.write_text(f"{base}/capacity-trace.jsonl", '{"request_id":"tampered"}\n')

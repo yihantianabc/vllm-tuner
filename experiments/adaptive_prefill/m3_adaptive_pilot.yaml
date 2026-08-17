@@ -1,0 +1,58 @@
+# M3 B4: second pilot candidate; backlog=28 is above the first pilot's p95=24.
+model: "/root/autodl-tmp/models/Qwen2.5-3B-Instruct"
+
+gpu: {device_ids: [0], count: 1}
+slo: {ttft_ms: 30000, tpot_ms: 1000, e2e_ms: 60000}
+constraints:
+  max_error_rate: 0.0
+  max_peak_vram_mb: 31000
+  max_memory_utilization: 0.95
+  require_no_oom: true
+  require_server_alive: true
+search_space:
+  gpu_memory_utilization: [0.70, 0.70]
+  max_num_batched_tokens: [8192]
+  max_num_seqs: [64]
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+workload:
+  name: "nonstationary-pilot"
+  dataset_name: "frozen:nonstationary-pilot"
+  sample_size: 32
+  prompt_length_distribution: "weighted"
+  warmup_requests: 1
+  max_concurrency: 32
+  max_tokens: 256
+  ignore_eos: true
+  seed: 2026
+  request_timeout_seconds: 300
+  benchmark_backend: "sse"
+telemetry: {enabled: true, interval_ms: 100, collect_nvml: true}
+baseline: {enabled: false}
+study:
+  trial_budget: 1
+  timeout_minutes: 30
+  prune_enabled: false
+  n_startup_trials: 1
+  methods: ["random"]
+  repeat_count: 1
+  top_candidates: 1
+  holdout_enabled: false
+  resume: false
+adaptive_prefill:
+  enabled: true
+  decision_log_enabled: true
+  low_prefill_cap: 1024
+  balanced_prefill_cap: 4096
+  high_prefill_cap: 8192
+  decode_backlog_high: 28
+  oldest_prefill_wait_ms: 100
+  kv_usage_high: 0.90
+  min_prefill_progress: 256
+  max_wait_ms: 1000
+  hysteresis_steps: 3
+  min_state_residency_steps: 3
+vllm_args:
+  max-model-len: 8192
+  no-async-scheduling: true
+  scheduler-cls: "vllm_tuner.scheduler.runtime.AdaptivePrefillScheduler"

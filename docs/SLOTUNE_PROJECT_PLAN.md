@@ -1,860 +1,758 @@
-# SLOTune 项目实施规划
+# vLLM V1 自适应 Chunked Prefill 调度优化项目计划（中间版）
 
-## 0. 文档信息
+> 状态：Planning Draft v3。本文只确定后续项目方向；尚未修改 vLLM 源码、学习文档和 README，也没有重新运行正式实验。文中的收益数字均为验收目标，不是已经取得的结果。
 
-- 项目名称：SLOTune
-- 完整定位：面向真实负载与 SLO 的 vLLM 调度与 KV Cache 优化实验平台
-- 核心场景：单机单卡 LLM 在线推理性能分析、容量规划和离线自动调优
-- 当前硬件：NVIDIA RTX 5090 32 GB
-- 当前基线：vLLM 0.16.0、PyTorch 2.9.1+cu130、Qwen3-0.6B
-- 数据盘根目录：/root/autodl-tmp
-- 核心开发周期：10–14 天
-- 完整增强周期：3–4 周
-- 上游来源：基于 jranaraki/vllm-tuner 二次开发，README 必须明确区分上游能力与个人贡献
-
-## 1. 项目目标
-
-本项目不做聊天应用、Web 管理后台或 Kubernetes 平台。目标是构建一个可信、可解释、可复现的推理性能实验系统，并实现一个有系统深度的调度优化。
-
-项目最终需要回答三个问题：
-
-1. 在指定模型、GPU 和流量模型下，哪些 vLLM 参数组合可以最大化满足 SLO 的有效吞吐？
-2. 当性能发生变化时，能否通过 queue、KV Cache、preemption 和 GPU 时间线解释原因？
-3. 自适应 Chunked Prefill / Token Budget 策略能否比 FCFS 和固定 budget 获得更好的尾延迟与 goodput？
-
-核心目标函数：
-
-~~~text
-SLO Goodput =
-  测量窗口内满足 TTFT、TPOT、E2E SLO 的成功请求数
-  ───────────────────────────────────────────────
-                         测量时间
-~~~
-
-约束至少包含：
-
-- 请求错误率不超过设定阈值
-- OOM 次数为 0
-- vLLM 服务不得异常退出
-- p99 TTFT、p99 TPOT 或 p99 E2E 满足实验定义的 SLO
-- Peak VRAM 不超过安全阈值
-- 自定义调度策略不得造成请求无限饥饿
-
-## 2. 项目价值主线
-
-项目对 AI Infra 面试的价值集中在四点：
-
-1. 测量正确性
-   正确区分 TTFT、TPOT、ITL、E2E、吞吐和 goodput，理解 open-loop 与 closed-loop 流量差异。
-
-2. 跨层可观测性
-   将客户端延迟与 vLLM waiting queue、KV Cache、preemption、GPU utilization 和显存时间线对齐。
-
-3. 系统机制优化
-   实现自适应 Chunked Prefill / Token Budget 策略，解释 prefill、decode、KV Cache 和调度公平性的权衡。
-
-4. 可复现实验
-   固定 trace、seed、模型版本、环境指纹和实验协议，保留逐请求原始结果并进行重复实验与 holdout 验证。
-
-## 3. 当前基线与已知问题
-
-当前仓库已经完成：
-
-- RTX 5090 单卡端到端 smoke
-- 本地 JSON、JSONL、CSV 数据加载
-- max_tokens 配置传递修复
-- vLLM 启动阶段健康检查兼容修复
-- 数据盘环境、缓存和输出隔离
-- 70 项单元测试
-- 一键安装与 smoke 脚本
-
-当前结果只能证明链路跑通，不能作为正式性能数据。必须优先解决以下问题：
-
-### P0：Benchmark correctness
-
-- [ ] 请求真正启用 OpenAI SSE streaming
-- [ ] 正确处理跨 HTTP chunk 的 SSE event 边界
-- [ ] TTFT 从请求发出到首个非空 token 计算
-- [ ] ITL 保存相邻 token 的到达间隔
-- [ ] TPOT 使用首 token 之后的生成时间和 token 数计算
-- [ ] E2E 单独保存，不再使用 TTFT + 平均 TPOT 近似
-- [ ] output token 数由 tokenizer、usage 或官方 benchmark 结果获得
-- [ ] total input/output tokens 不得为无意义的 0
-- [ ] percentile 使用可靠实现，不使用简单下标近似
-- [ ] warmup 数据不得进入正式统计窗口
-- [ ] asyncio.gather 返回的异常必须被显式记录
-- [ ] 所有指标保存逐请求原始值，而不只保存聚合值
-
-### P0：Telemetry correctness
-
-- [ ] 不再依赖易变化的 vLLM 日志正则作为主要指标源
-- [ ] 接入 vLLM /metrics
-- [ ] 采集 running、waiting、KV usage、preemption、token counters
-- [ ] 测量窗口内每 100–200 ms 连续采集 NVML
-- [ ] 正确计算 peak、mean、p95 VRAM 和 GPU utilization
-- [ ] 可选计算 energy per output token
-- [ ] 使用 client、engine、gpu 三个命名空间，禁止字段覆盖
-- [ ] Prometheus counter 使用测量窗口前后 delta，不直接使用累计值
-
-### P0：Optimizer correctness
-
-- [ ] 删除无效的 batch_size 搜索参数
-- [ ] 单卡固定 tensor_parallel_size=1、pipeline_parallel_size=1
-- [ ] 检测 trial 参数与固定 vllm_args 的重复和覆盖
-- [ ] 删除名不副实的 60/30/10 weighted objective
-- [ ] 使用 SLO goodput 单目标约束优化作为 MVP
-- [ ] 失败 trial 标记为 FAIL、PRUNED 或 INFEASIBLE
-- [ ] 禁止多目标失败值统一返回负无穷
-- [ ] 保存明确的 failure_reason 和最后一次服务状态
-- [ ] default、random、TPE 使用相同 trial budget 对照
-
-## 4. 目标架构
-
-~~~text
-ExperimentSpec
-  model / version / hardware / workload / SLO / search space
-                              │
-                              ▼
-                       Trial Controller
-          START → READY → WARMUP → MEASURE → COLLECT → STOP
-             │                   │                   │
-             ▼                   ▼                   ▼
-        vLLM Server       vLLM Bench Adapter    Telemetry Session
-                          or SSE Client          /metrics + NVML
-             └───────────────────┬───────────────────┘
-                                 ▼
-                          Result Validator
-                request results / engine series / gpu series
-                                 ▼
-                           Metric Reducer
-                   TTFT / TPOT / ITL / E2E / Goodput
-                                 ▼
-                    Constrained Search Controller
-                         default / random / TPE
-                                 ▼
-                    Holdout Validation + Report
-~~~
-
-## 5. 建议代码结构
-
-~~~text
-src/vllm_tuner/
-├── experiment/
-│   ├── models.py              # ExperimentSpec、TrialResult、环境指纹
-│   ├── manifest.py            # 保存版本、GPU、模型 hash、trace checksum
-│   └── artifacts.py           # 统一管理输出目录和原始数据
-├── workloads/
-│   ├── trace.py               # 固定 workload trace
-│   ├── generator.py           # token 长度分布和到达时间
-│   └── profiles.py            # chat、RAG、long-prefill profile
-├── benchmarks/
-│   ├── vllm_bench.py          # 官方 vllm bench serve 适配器
-│   ├── sse_client.py          # 可选的自有流式客户端
-│   └── result_parser.py       # 官方 JSON 与逐请求结果解析
-├── profiling/
-│   ├── prometheus.py          # vLLM /metrics 采集
-│   ├── nvml_session.py        # 测量窗口连续采样
-│   └── timeseries.py          # 时间对齐与聚合
-├── runtime/
-│   ├── server.py              # vLLM 进程生命周期
-│   ├── state_machine.py       # trial 状态机
-│   └── failures.py            # OOM、端口、启动、请求错误分类
-├── tuning/
-│   ├── objective.py           # SLO、goodput 和约束
-│   ├── search_space.py        # 有效参数与条件搜索空间
-│   └── optimizer.py           # default、random、TPE
-├── scheduling/
-│   ├── token_budget.py        # 自适应 Token Budget 策略
-│   ├── admission.py           # aging、max-wait、公平性
-│   └── simulator.py           # 纯 Python 可确定性调度模拟
-└── reporting/
-    ├── plots.py               # capacity、Pareto、time series
-    └── report.py              # 静态 HTML/Markdown 报告
-
-tests/
-├── unit/
-├── integration/
-└── fixtures/
-    ├── sse/
-    ├── prometheus/
-    └── benchmark_results/
-~~~
-
-不要求一次性完成目录迁移。按里程碑逐步抽取，避免大爆炸式重构。
-
-## 6. 里程碑 M0：冻结可复现基线
-
-目标：在开始重构前保留当前已验证状态。
-
-任务：
-
-- [ ] 记录当前 commit、未提交修改和成功 study 路径
-- [ ] 保存 Python、vLLM、PyTorch、CUDA、驱动和 FlashInfer 版本
-- [ ] 保存 GPU 型号、显存、CPU 和内存信息
-- [ ] 保留 reproduction_gpu_20260815_a 作为 bring-up artifact
-- [ ] 创建独立开发分支
-- [ ] 将已有改动拆成语义清晰的 commits
-- [ ] 在 README 标记 0.6B 结果为 smoke，不是 benchmark
-
-验收标准：
-
-- [ ] 全新数据盘环境可通过安装脚本重建
-- [ ] smoke 一条命令可运行
-- [ ] 70 项测试通过
-- [ ] 大文件和缓存仍只写入 /root/autodl-tmp
-- [ ] 基线 artifact 可追溯到唯一代码版本
-
-## 7. 里程碑 M1：可信 Benchmark 管线
-
-目标：得到能经受面试追问的逐请求指标。
-
-优先策略：
-
-1. 使用官方 vllm bench serve 作为可信测量后端。
-2. 保留自有 SSE client 作为学习、测试和交叉验证工具。
-3. 项目贡献放在实验控制、结果验证、约束搜索和跨层遥测，不重复造完整 load generator。
-
-任务：
-
-- [ ] 新增 BenchmarkAdapter 接口
-- [ ] 实现 VLLMBenchAdapter
-- [ ] 支持 request_rate、burstiness、max_concurrency
-- [ ] 支持 fixed input/output token length
-- [ ] 支持 ignore_eos、seed、warmup 和结果落盘
-- [ ] 解析 completed、failed、input/output tokens
-- [ ] 解析 TTFT、TPOT、ITL、E2E 和 goodput
-- [ ] 保存官方 benchmark 原始 JSON
-- [ ] 自有 SSE client 增加 stream=true
-- [ ] 正确解析 data 行、空行、DONE 和拆分 chunk
-- [ ] 使用 time.perf_counter_ns 记录客户端时间
-- [ ] 建立 RequestSpec 和 RequestResult 类型
-
-RequestResult 至少包含：
-
-~~~text
-request_id
-scheduled_at
-sent_at
-first_token_at
-finished_at
-input_tokens
-output_tokens
-token_timestamps
-status
-error_type
-~~~
-
-验收标准：
-
-- [ ] fixture 覆盖一个 event 被拆成多个 HTTP chunk
-- [ ] fixture 覆盖一个 chunk 包含多个 SSE event
-- [ ] fixture 覆盖 DONE、空文本、HTTP 错误和 timeout
-- [ ] TTFT、TPOT、ITL、E2E 的单元测试使用手算期望值
-- [ ] 与官方 vllm bench serve 对同一 workload 交叉验证
-- [ ] completed、token 数和主要延迟指标差异有解释
-- [ ] 正式结果中 total tokens 不再为 0
-
-## 8. 里程碑 M2：跨层 Telemetry
-
-目标：不仅知道配置快不快，还能解释为什么。
-
-Prometheus 指标优先采集：
-
-- vllm:num_requests_running
-- vllm:num_requests_waiting7
-- vllm:kv_cache_usage_perc
-- vllm:num_preemptions_total 或当前版本等价指标
-- vllm:prompt_tokens_total
-- vllm:generation_tokens_total
-- vllm:prefix_cache_queries
-- vllm:prefix_cache_hits
-- vllm:time_to_first_token_seconds
-- vllm:inter_token_latency_seconds
-- vllm:e2e_request_latency_seconds
-- vllm:request_queue_time_seconds
-
-NVML 指标：
-
-- memory used / total
-- SM utilization
-- power usage
-- temperature
-- SM clock
-- memory clock
-
-任务：
-
-- [ ] 实现异步 TelemetrySession
-- [ ] 与 benchmark 测量窗口同时启动和停止
-- [ ] 采样间隔配置化，默认 200 ms
-- [ ] 保存 Prometheus 原始快照或解析后的 Parquet/JSONL
-- [ ] 保存 NVML 时间序列
-- [ ] 使用 monotonic timestamp 对齐客户端与服务端数据
-- [ ] 计算 peak、mean、p95 和窗口 delta
-- [ ] telemetry task 在异常和取消时可靠退出
-- [ ] vLLM 停止前完成最后一次采集
-
-验收标准：
-
-- [ ] 压测期间 GPU utilization 不再恒为 0
-- [ ] peak_memory_mb 来自真实时间序列最大值
-- [ ] token counters 与客户端结果数量级一致
-- [ ] waiting queue 与高 TTFT 时间段可以对齐
-- [ ] 采集任务不会阻止服务退出
-- [ ] telemetry 缺失时 trial 明确降级，不伪造 0 值
-
-## 9. 里程碑 M3：可靠 Trial 生命周期
-
-目标：任何失败都能被正确分类、清理和恢复。
-
-状态机：
-
-~~~text
-CREATED
-  → STARTING
-  → READY
-  → WARMING_UP
-  → MEASURING
-  → COLLECTING
-  → STOPPING
-  → COMPLETE
-
-任何阶段可进入：
-FAILED / INFEASIBLE / PRUNED
-~~~
-
-任务：
-
-- [ ] 自动选择或检查空闲端口
-- [ ] 启动后同时检查进程状态和健康端点
-- [ ] 保存服务启动命令、环境和完整日志
-- [ ] 管理整个进程组，而不只管理父进程
-- [ ] stop 超时后逐级终止并确认 GPU 进程清理
-- [ ] 分类 OOM、端口冲突、参数错误、模型加载错误、请求错误
-- [ ] 普通 RuntimeError 不得自动标成 OOM
-- [ ] 每个 trial 都输出结构化 failure_reason
-- [ ] 已有 study 默认不静默追加不兼容实验
-- [ ] resume 时验证 manifest 与 search space 一致
-
-验收标准：
-
-- [ ] 人为端口冲突可得到 PORT_IN_USE
-- [ ] 无效 vLLM 参数可得到 INVALID_ARGUMENT
-- [ ] 模拟 OOM 可得到 OOM，而普通异常不会被误报
-- [ ] 失败后 GPU 无残留进程
-- [ ] 失败 trial 不进入 best/Pareto 结果
-- [ ] 下一个 trial 可以继续运行
-
-## 10. 里程碑 M4：SLO-aware Autotuner
-
-MVP 搜索空间：
+## 0. 最终项目定位
+
+项目不再把 SLOTune 自动调参平台作为主线，也不采用上一版同时修改 Scheduler、KVCacheManager 和 BlockPool 的高风险方案。
+
+新的项目题目是：
+
+> **基于真实 vLLM V1 的 Workload-aware Adaptive Chunked Prefill Scheduling**
+
+中文简历可写为：
+
+> **基于 vLLM V1 的自适应 Chunked Prefill 调度优化与 KV Cache 性能分析**
+
+项目只保留一个需要修改 vLLM 源码的核心贡献：
+
+> 在 vLLM V1 Scheduler 中实现三状态自适应 Prefill 控制器，根据 Decode backlog、最老 Prefill 等待时间和 KV Cache 使用率，在运行时动态调整 Prefill 推进强度，以适应非平稳混合流量。
+
+再用两组 vLLM 原生能力实验补足知识面：
+
+1. Automatic Prefix Caching（APC）的冷/热缓存和不同前缀复用率实验；
+2. FP8 KV Cache 的显存容量、并发能力、延迟与质量实验；若当前模型、硬件或 backend 不兼容，则降级为 CUDA Graph eager/non-eager 实验。
+
+APC 和 FP8 KV Cache 是实验研究项，不包装成自主实现；简历中的源码贡献只写 Adaptive Scheduler。
+
+### 0.1 一句话面试主线
+
+> 固定 Chunked Prefill 参数只能适合某一类流量。我在真实 vLLM V1 Scheduler 中加入低开销三状态控制器，让系统在 Decode 密集、长 Prefill 突发和混合阶段使用不同 Prefill Budget，并通过固定基线、Oracle 上界和 held-out trace 验证它对尾延迟与 SLO goodput 的影响。
+
+### 0.2 项目边界
+
+本版明确不做：
+
+- 不修改 BlockPool、block hash、ref count 或 KV eviction；
+- 不实现 Prefix-aware 请求重排；
+- 不重写 PagedAttention、FlashAttention 或 FP8 Decode Kernel；
+- 不做 Triton 算子融合；
+- 不继续扩展 Optuna、Dashboard、Web 平台或通用调参框架；
+- 不把 CPU simulator 结果作为正式结论；
+- 不承诺向 vLLM upstream 提交，也不以“可开源贡献”作为验收条件；
+- 不在实验完成前预写提升百分比。
+
+这些能力可以在面试中解释，但不作为本项目必须完成的工程范围。
+
+---
+
+## 1. 为什么选择中间版
+
+### 1.1 旧 SLOTune 的问题
+
+| 旧成果 | 真实情况 | 本版处理 |
+|---|---|---|
+| Qwen2.5-3B Chat/RAG formal | RTX 5090 上的真实 GPU 实验，但 TPE 未显著超过 default | 保留为 Legacy 和负结果分析 |
+| Adaptive Token Budget | CPU simulator，未形成正向收益 | 不进入新项目主结果 |
+| Optuna/TPE、Trial、Artifact | 工程完整，但离 vLLM 核心机制较远 | 停止扩展 |
+| SSE、指标、Prometheus、NVML | 有复用价值 | 收敛成 benchmark/eval 工具 |
+
+旧项目的问题不是“实验全部是假的”，而是主要结果没有证明有价值的 vLLM 优化，平台工作量又掩盖了推理引擎主线。
+
+### 1.2 上一版 SAGE 的问题
+
+上一版同时要求 Adaptive Chunked Prefill、Prefix-aware Admission、Reuse-aware KV Eviction 和可选 Triton Kernel。
+
+其中 Admission/BlockPool 会触及等待队列公平性、block hash、引用计数、淘汰队列和 Hybrid KV Cache 等复杂不变量。即使代码能够运行，也需要大量正确性和压力测试才能证明没有隐藏泄漏或饥饿。
+
+这对当前目标有三个明显风险：
+
+- 学习跨度过大，面试中容易只能背设计而不能解释实现；
+- 成熟 vLLM 的默认实现很强，三项修改未必都能得到正收益；
+- 项目接近研究或 upstream 贡献的工作量，偏离“可完成、可复现、可答辩”的求职目标。
+
+### 1.3 中间版的平衡
+
+| 维度 | 旧 SLOTune | 中间版 | 上一版 SAGE |
+|---|---|---|---|
+| 核心贡献 | 外围参数搜索 | 一个真实 Scheduler 改动 | Scheduler + Admission + BlockPool |
+| vLLM 源码深度 | 低 | 中等且聚焦 | 高 |
+| 实验价值 | 当前结果偏弱 | 非平稳负载下验证动态策略 | 多机制协同研究 |
+| 正确性风险 | 低 | 中低 | 高 |
+| 面试可解释性 | 一般 | 高 | 当前阶段偏低 |
+| 预计时间 | 已有基础 | 约 2～3 周 | 约 3～5 周以上 |
+
+中间版的目标不是证明“比成熟 vLLM 全面更快”，而是证明：
+
+> 在明确的非平稳负载下，单一固定 Prefill Budget 存在阶段性取舍，一个有安全边界的轻量控制器可以提高整体稳定性或 SLO goodput。
+
+---
+
+## 2. 核心研究问题与假设
+
+### 2.1 核心问题
+
+vLLM 的默认 Scheduler 使用固定上限控制单步可调度 Token 数。固定配置通常已经较强，但不同阶段的最优取值可能不同：
+
+- Decode-heavy：需要保护正在生成请求的 TPOT/ITL；
+- Long-prefill burst：需要推进长 Prompt，避免等待时间持续累积；
+- Mixed：需要在 Decode 延迟和 Prefill 吞吐之间折中；
+- KV pressure 较高：继续激进推进 Prefill 可能增加抢占或容量压力。
+
+项目回答：
+
+> 在不改变请求顺序、不修改 KV Cache 正确性、不修改 GPU Kernel 的情况下，能否根据少量在线信号动态调整 Prefill Budget，使同一个配置在变化流量下比默认配置或任一单一固定 Budget 更稳定？
+
+### 2.2 核心假设 H1
+
+> 三状态 Adaptive Prefill Controller 在非平稳混合负载上，可以降低尾部 TTFT/TPOT 或提高 SLO goodput，同时保持吞吐量和长请求公平性。
+
+这也是唯一需要作为“自主优化贡献”证明的假设。
+
+### 2.3 支撑问题，不作为新算法
+
+#### S1：Automatic Prefix Caching
+
+APC 在热缓存和高前缀复用率下应主要减少重复 Prefill 与 TTFT；它不会直接减少每个 Decode Token 的计算量。
+
+#### S2：FP8 KV Cache
+
+FP8 KV Cache 应主要降低 KV 显存占用、提高可容纳 Token 数或并发容量；容量收益不等于吞吐量必然同比增长，且需要检查 scale、backend 与质量影响。
+
+---
+
+## 3. 固定版本和源码范围
+
+### 3.1 初始环境
+
+- GPU：NVIDIA GeForce RTX 5090 32 GB；
+- vLLM：固定本机已安装的 0.16.0 对应 commit；
+- Python：3.12；
+- Smoke 模型：Qwen3-0.6B 或当前可用小模型；
+- Pilot 模型：Qwen2.5-3B-Instruct；
+- Formal 模型：优先选择兼容的 7B/8B dense instruct 模型；若受显存、下载或 backend 限制，保留 3B 结果并明确降级。
+
+正式结果必须记录：vLLM commit、模型 revision、CUDA、PyTorch、GPU、启动参数和 trace checksum。
+
+### 3.2 允许修改的 vLLM 范围
+
+首选通过固定版本的自定义 `scheduler_cls` 实现；如果接口导致大段复制，再改为最小 fork patch。
+
+允许触及：
+
+| 文件/接口 | 用途 |
+|---|---|
+| `vllm/config/scheduler.py` | 暴露并加载自定义 Scheduler 配置 |
+| `vllm/v1/core/sched/interface.py` | 核对接口契约，原则上不修改 |
+| `vllm/v1/core/sched/scheduler.py` | 计算动态 Prefill cap/budget，保留默认调度主语义 |
+| `vllm/v1/request.py` | 读取请求进度、到达时间等已有状态，原则上不改结构 |
+| Engine metrics/tracing | 输出每步控制器状态和调度统计 |
+
+禁止触及：
+
+- `kv_cache_manager.py` 的分配和命中语义；
+- `block_pool.py` 与空闲 block 队列；
+- PagedAttention、FlashAttention、ModelRunner Kernel；
+- 采样和模型输出语义。
+
+### 3.3 保存方式
+
+不能只修改 `.venv/site-packages` 后运行实验。正式实现必须保存为以下一种形式：
+
+1. 固定 v0.16.0 的小型 vLLM fork；或
+2. 当前仓库中的可审查 patch series，加上固定 upstream commit 和应用脚本。
+
+当前 `vllm-tuner` 仓库负责 workload、benchmark、结果聚合和复现，不再发展成平台。
+
+---
+
+## 4. 自适应 Prefill 控制器设计
+
+### 4.1 只使用三个核心信号
+
+每个 Scheduler step 读取：
+
+1. `decode_backlog`：当前需要继续 Decode 的请求数量；
+2. `oldest_prefill_wait_ms`：尚未完成 Prefill 的请求中最长等待时间；
+3. `kv_cache_usage`：当前 KV Cache 使用率。
+
+preemption、step time、running/waiting 数量可以记录为诊断指标，但第一版不进入控制公式，防止控制器逐渐变成难以解释的启发式集合。
+
+### 4.2 三种状态
+
+#### `PROTECT_DECODE`
+
+触发条件：Decode backlog 较高，或者 KV Cache 使用率接近保护阈值。
+
+行为：
+
+- Prefill cap 使用较小档位；
+- Decode Token 不受额外压缩；
+- 限制新增长 Prompt 在单步内占用过多 Budget；
+- 目标是保护 TPOT/ITL，并减少高压力下的进一步容量冲击。
+
+#### `BALANCED`
+
+触发条件：系统没有明显 Decode 拥塞，Prefill 也未达到最长等待阈值。
+
+行为：
+
+- 使用中等 Prefill cap；
+- 维持默认 running-first 和 waiting queue 顺序；
+- 作为大部分正常负载的稳态。
+
+#### `DRAIN_PREFILL`
+
+触发条件：最老 Prefill 等待超过阈值，且 Decode backlog 没有处于高位。
+
+行为：
+
+- 使用较大 Prefill cap；
+- 保证长 Prompt 得到推进；
+- 到达 `max_wait` 的请求获得最低进展保证。
+
+### 4.3 优先级和安全规则
+
+规则优先于状态：
+
+1. 总调度 Token 不得超过 vLLM 原始 `max_num_batched_tokens`；
+2. 不改变 waiting queue 的 FCFS/priority 顺序；
+3. 不改变 KV block 的分配、释放、命中或淘汰；
+4. Decode 每一步保持进展；
+5. Prefill 达到 `max_wait` 后必须至少获得 `min_prefill_progress`；
+6. 状态切换加入 hysteresis 和最小驻留 step，避免阈值附近来回抖动；
+7. 控制器不得触发 GPU 同步；
+8. feature disabled 时应退化为默认 Scheduler；
+9. 请求输出、错误率和完成数必须与 baseline 对齐。
+
+如果第 4、5 条在极端容量压力下无法同时满足，优先遵守 vLLM 原始容量和正确性约束，并记录该 step 未推进的原因，不能通过越界调度制造结果。
+
+### 4.4 配置草案
 
 ~~~yaml
-gpu_memory_utilization:
-  low: 0.60
-  high: 0.95
-max_num_seqs:
-  values: [8, 16, 32, 64, 128]
-max_num_batched_tokens:
-  values: [1024, 2048, 4096, 8192]
-tensor_parallel_size:
-  fixed: 1
-pipeline_parallel_size:
-  fixed: 1
+adaptive_prefill:
+  enabled: true
+  low_prefill_cap: 1024
+  balanced_prefill_cap: 4096
+  high_prefill_cap: 8192
+  decode_backlog_high: TBD_BY_PILOT
+  oldest_prefill_wait_ms: TBD_BY_PILOT
+  kv_usage_high: TBD_BY_PILOT
+  min_prefill_progress: 256
+  max_wait_ms: TBD_BY_SLO
+  hysteresis_steps: 3
+  min_state_residency_steps: 3
 ~~~
 
-明确区分：
+1024/4096/8192 是初始候选档位，不是预设最优值。Pilot 后可以根据模型长度、合法配置和容量拐点调整，但必须在 Formal 前冻结。
 
-- Server parameters：由 tuner 搜索
-- Workload parameters：request rate、burstiness、max concurrency
-- Experiment constants：模型、版本、trace、seed、采样设置
+### 4.5 决策输出
 
-任务：
-
-- [ ] 新增 SLOConfig
-- [ ] 支持 TTFT、TPOT、E2E 阈值
-- [ ] 计算 per-request good/bad
-- [ ] 计算 request goodput
-- [ ] error、OOM 和服务退出作为硬约束
-- [ ] 使用 constrained TPE 或显式 infeasible handling
-- [ ] 实现 equal-budget random search baseline
-- [ ] 保留 vLLM default baseline
-- [ ] 对 search space 做参数关系校验
-- [ ] 保存每个候选配置的完整环境和原始结果
-- [ ] top candidate 在正式报告前自动重复运行
-
-验收标准：
-
-- [ ] 已知失败 trial 不会被选为 best
-- [ ] random 与 TPE 使用相同有效 trial 数
-- [ ] 同一 seed 可以复现参数建议顺序
-- [ ] 报告明确区分 offered load、achieved throughput 和 goodput
-- [ ] best config 必须在 holdout workload 上重新验证
-- [ ] 权重字段不再误导用户
-
-## 11. 里程碑 M5：核心深度模块——自适应 Chunked Prefill
-
-这是项目区别于普通 benchmark 工具的核心系统优化。
-
-### 11.1 研究问题
-
-- 固定 token budget 在短交互请求和长 prefill 混合时是否会造成 head-of-line blocking？
-- 较小 budget 是否改善 decode/ITL，却牺牲 prefill/TTFT 或吞吐？
-- 能否根据 decode backlog、waiting time 和 KV pressure 动态调整 budget？
-- 如何避免长请求被持续推迟？
-- 策略收益是否能在不同 request rate 和 held-out trace 上保持？
-
-### 11.2 Baseline 策略
-
-- FCFS + vLLM 默认配置
-- 固定 Token Budget：512、1024、2048、4096、8192
-- 固定 max_num_seqs
-- vLLM priority policy，如当前版本支持
-
-### 11.3 自适应策略草案
-
-输入信号：
-
-- waiting decode requests
-- waiting prefill requests
-- oldest request age
-- KV cache usage
-- recent p99 TTFT / TPOT
-- preemption count
-- available token budget
-
-策略示例：
+每个 step 记录：
 
 ~~~text
-if decode_backlog is high or TPOT is near SLO:
-    reduce prefill budget
-elif oldest_prefill_age exceeds max_wait:
-    reserve budget for the oldest prefill
-elif KV usage is near pressure threshold:
-    reduce admitted sequences
-else:
-    increase prefill budget toward throughput target
+timestamp
+controller_state
+decode_backlog
+oldest_prefill_wait_ms
+kv_cache_usage
+prefill_cap
+scheduled_decode_tokens
+scheduled_prefill_tokens
+running_requests
+waiting_requests
+preemption_delta
+scheduler_cpu_time_us
+reason_code
 ~~~
 
-必须加入：
+这些日志用于回答“控制器为什么切换”和“收益是否真的来自调度变化”，不进入在线复杂优化。
 
-- aging
-- max_wait
-- 最小 prefill progress
-- budget 上下界
-- hysteresis，避免配置频繁抖动
-- 策略决策日志
+### 4.6 实现规模目标
 
-### 11.4 实现路径
+- Controller：约 150～250 行；
+- Scheduler 接入与 metrics：约 150～300 行改动；
+- 单元测试：约 300～500 行；
+- workload/analysis：复用现有代码并做减法。
 
-低风险路径：
+代码行数不是验收项；这里的限制是为了避免再次扩展成平台。
 
-1. 先实现纯 Python deterministic simulator。
-2. 使用合成请求验证公平性、等待时间和预算守恒。
-3. 再实现入口 admission controller 或 nano-vLLM scheduler 修改。
-4. 最后再考虑 vLLM scheduler plugin/内部接口。
+---
 
-不要一开始直接修改 vLLM 深层 scheduler；其内部接口变化快，必须 pin 精确 commit。
+## 5. 核心实验：非平稳混合负载
 
-### 11.5 验收标准
+### 5.1 为什么必须使用非平稳流量
 
-- [ ] 任一调度 step 不超过总 token budget
-- [ ] decode 与 prefill 请求均可取得进展
-- [ ] max_wait 测试证明不存在无限饥饿
-- [ ] 相同 trace 下策略决策可复现
-- [ ] 与至少两个固定 budget baseline 对照
-- [ ] 报告 p50/p99 queue time、TTFT、TPOT、goodput
-- [ ] 同时报告 fairness、starvation 和 preemption
-- [ ] 至少一个实验解释策略无收益或负收益的条件
-- [ ] 收益必须在 held-out trace 上复验
+如果整个实验只有一种固定流量，人工调好的单一 Budget 很可能比自适应控制器更简单、更稳定。Adaptive 的合理使用场景是请求组成随时间变化。
 
-## 12. 里程碑 M6：Prefix Caching 扩展
+因此正式 trace 至少包含三个连续阶段：
 
-此阶段是 P1，不阻塞核心项目完成。
-
-基础实验维度：
-
-- APC on / off
-- cold / warm cache
-- shared prefix ratio：0%、25%、50%、75%、100%
-- prefix length：512、2048、4096 或硬件允许范围
-- arrival order：random、tile、interleave
-- short output / long output
-- 不同 KV cache pressure
-
-重点指标：
-
-- prefix cache query/hit 或 queried/cached token counters
-- p99 TTFT
-- output throughput
-- SLO goodput
-- KV cache usage
-- eviction / preemption
-- waiting queue
-
-可选差异化：
-
-- [ ] 根据 prefix fingerprint 计算 reuse score
-- [ ] 使用 reuse score + age 做 bounded reordering
-- [ ] 设置 max_wait 防止低复用请求饥饿
-- [ ] 与 FCFS 比较 cache hit、goodput 和公平性
-
-验收标准：
-
-- [ ] 明确区分 cold 与 warm 结果
-- [ ] 不声称 APC 会加速长答案 decode
-- [ ] 测试共享率为 0 时的额外开销
-- [ ] 测试高共享率时的收益
-- [ ] 报告 reordering 带来的排队和公平性代价
-
-## 13. 正式实验协议
-
-### 13.1 模型
-
-- Qwen3-0.6B：仅用于 CI、开发和 GPU smoke
-- 正式模型：本地可获得的 3B–8B dense model
-- 优先 7B/8B，以便在 RTX 5090 上体现 KV Cache 和调度压力
-- 每份结果必须记录模型路径、配置 hash 和 tokenizer hash
-
-### 13.2 Workload profiles
-
-| Profile | Input tokens | Output tokens | 特征 | 目的 |
-|---|---:|---:|---|---|
-| Chat | 约 256 | 约 128 | 短输入、中等输出 | 观察 decode 与并发 |
-| RAG | 约 2048 | 约 128 | 长输入、共享前缀 | 观察 prefill/APC |
-| Mixed | 256–4096 | 64–256 | 长短混合 | 观察 HOL blocking |
-| Codegen，可选 | 约 512 | 约 512 | 长 decode | 观察 TPOT |
-
-所有 trial 必须使用同一份固定 trace，而不是每次重新随机采样。
-
-### 13.3 Capacity sweep
-
-建议 request rate：
-
-~~~text
-1 / 2 / 4 / 8 / 16 / 32 / inf
-~~~
-
-实际范围需根据正式模型的 baseline 调整。
-
-每个点记录：
-
-- offered request rate
-- achieved request rate
-- request throughput
-- output token throughput
-- SLO goodput
-- p50/p95/p99 TTFT
-- p50/p95/p99 TPOT
-- p50/p95/p99 E2E
-- errors/timeouts
-- waiting queue
-- peak KV usage
-- preemptions
-- peak VRAM
-- mean GPU utilization
-
-### 13.4 单个正式 trial
-
-建议流程：
-
-1. 清理或重置相关 cache。
-2. 启动服务并等待 READY。
-3. 执行 30 秒 warmup。
-4. 执行 60–120 秒测量，或至少完成 500 个请求。
-5. 停止负载并收集最后快照。
-6. 优雅停止服务。
-7. 校验进程、GPU 和端口已清理。
-8. 校验 artifact 完整性。
-9. 验证成功才提交给 optimizer。
-
-### 13.5 重复与验证
-
-- baseline 至少重复 3 次
-- random best 至少重复 3 次
-- TPE top 3 各重复 3 次
-- 配置执行顺序随机化，降低温度和系统漂移影响
-- 报告中位数、范围或 bootstrap confidence interval
-- 使用未参与搜索的 trace 或 request rate 做 holdout
-- 结果只对 model × hardware × workload × vLLM version 有效
-
-### 13.6 预设成功条件
-
-这些是项目验收目标，不是提前承诺的结果：
-
-- 同一 SLO 下 goodput 相比 vLLM default 提升至少 15%；或
-- 相同 goodput 下 p99 TTFT 降低至少 20%；或
-- 在混合长短请求中显著降低短请求 p99，同时无 starvation
-- 三次重复均无 OOM 和服务异常退出
-- holdout workload 无明显退化
-- 自有指标与官方 benchmark 的主要差异可以解释
-
-即使未达到提升目标，也必须保留负结果并分析原因。
-
-## 14. 测试规划
-
-### Unit tests
-
-- [ ] SSE event 分片与合并
-- [ ] TTFT、TPOT、ITL、E2E 数学定义
-- [ ] percentile 与 goodput
-- [ ] Prometheus counter delta
-- [ ] NVML 时间序列聚合
-- [ ] trial 状态转换
-- [ ] OOM 与普通异常分类
-- [ ] 参数冲突和搜索空间校验
-- [ ] direction-aware failure handling
-- [ ] scheduler budget 守恒
-- [ ] scheduler aging/max_wait
-- [ ] artifact manifest 和 checksum
-
-### Integration tests
-
-- [ ] 本地假 HTTP/SSE server
-- [ ] 假 Prometheus endpoint
-- [ ] vLLM 启动、健康检查、请求、停止
-- [ ] 失败 trial 后继续下一个 trial
-- [ ] Qwen3-0.6B 单卡 GPU smoke
-- [ ] official vllm bench adapter smoke
-- [ ] telemetry 与 benchmark 同步启动/停止
-
-### Manual performance validation
-
-- [ ] 0.6B 快速验证
-- [ ] 7B/8B 正式 baseline
-- [ ] capacity sweep
-- [ ] fixed token-budget ablation
-- [ ] adaptive policy
-- [ ] holdout
-- [ ] prefix caching，可选
-
-性能测试不应默认进入普通 CI；使用 pytest marker 和显式 GPU 命令。
-
-## 15. Artifact 结构
-
-~~~text
-results/<experiment-id>/
-├── manifest.json
-├── experiment.yaml
-├── trace.jsonl
-├── trace.sha256
-├── environment/
-│   ├── python-packages.txt
-│   ├── nvidia-smi.txt
-│   ├── collect-env.txt
-│   └── git-state.txt
-├── trials/
-│   └── <trial-id>/
-│       ├── server-command.json
-│       ├── params.json
-│       ├── status.json
-│       ├── request-results.jsonl
-│       ├── benchmark-raw.json
-│       ├── prometheus.jsonl
-│       ├── nvml.jsonl
-│       ├── server.log
-│       └── summary.json
-├── aggregate/
-│   ├── trials.parquet
-│   ├── repeated-results.parquet
-│   └── holdout-results.parquet
-└── report/
-    ├── report.html
-    ├── capacity-curve.png
-    ├── pareto.png
-    ├── telemetry-timeline.png
-    └── comparison-table.md
-~~~
-
-所有大文件继续保存在 /root/autodl-tmp。
-
-## 16. 10–14 天排期
-
-| 时间 | 工作 | 交付物 |
+| 阶段 | 请求特征 | 主要压力 |
 |---|---|---|
-| Day 1 | 冻结基线、定义 RequestSpec/RequestResult/TrialResult | 数据模型、设计说明 |
-| Day 2 | 官方 vllm bench adapter | 原始 JSON 可解析 |
-| Day 3 | SSE correctness 与 metric reducer | fixture tests、正确指标 |
-| Day 4 | Prometheus + NVML session | 两类时间序列 |
-| Day 5 | Trial 状态机与失败分类 | 可恢复的 trial runner |
-| Day 6 | SLO goodput 与 constrained TPE | default/random/TPE |
-| Day 7 | GPU integration smoke 与官方交叉验证 | integration artifact |
-| Day 8 | 7B/8B baseline capacity sweep | capacity curve |
-| Day 9 | 固定 token-budget ablation | TTFT–TPOT–goodput 图 |
-| Day 10 | 自适应策略 simulator | 公平性和 budget tests |
-| Day 11 | 策略接入运行时 | adaptive trials |
-| Day 12 | top candidates 重复实验 | 重复结果 |
-| Day 13 | holdout 与负结果分析 | holdout 表格 |
-| Day 14 | README、报告、Demo、简历 | 面试交付包 |
+| A：Decode-heavy | 中短 Prompt、较长输出、较高并发 | TPOT/ITL |
+| B：Long-prefill burst | 突发 4K～8K Prompt、短输出 | TTFT、等待队列 |
+| C：Mixed | 长短 Prompt 和不同输出长度并存 | 延迟与吞吐折中 |
 
-若只有 10 天：
+阶段顺序在 held-out trace 中改变，避免控制器只记住固定时间表。控制器不能读取阶段标签或未来请求。
 
-- 必须完成 M0–M4
-- M5 至少完成 simulator + 固定 budget ablation
-- Prefix Caching 和实际 scheduler 集成顺延
+### 5.2 Baseline
 
-## 17. README 包装计划
+- B0：原始 vLLM 默认 Scheduler；
+- B1：固定小 Prefill Budget/Cap；
+- B2：固定中 Prefill Budget/Cap；
+- B3：固定大 Prefill Budget/Cap；
+- B4：Adaptive 三状态控制器；
+- B5：Offline per-phase Oracle，只作为分析上界。
 
-README 首页顺序：
+Oracle 的含义是：实验结束后，为每个阶段选出表现最好的固定档位。它知道阶段边界，不能部署，因此不能作为真实在线方案宣称。
 
-1. 一句话问题定义
-2. 一张真实结果表
-3. 一张 capacity/Pareto 图
-4. 系统架构
-5. Benchmark methodology
-6. 三个关键设计决策
-7. default vs random vs TPE
-8. 自适应 Chunked Prefill 机制
-9. Failure cases
-10. 一键复现
-11. Limitations
-12. Upstream vs My Contributions
+### 5.3 负载点
 
-必须包含：
+先对 B0 做 capacity sweep，再冻结三个负载点：
+
+- 约 70% baseline capacity：观察控制器空载开销；
+- 约 90% baseline capacity：正式主结果；
+- 约 105% baseline capacity：观察拥塞与失效边界，不作为唯一 headline。
+
+如果不同策略的 capacity 不同，正式比较仍使用相同 offered load，不能分别挑各自最有利的请求速率。
+
+### 5.4 主指标
+
+- p50/p95/p99 TTFT；
+- p50/p95/p99 TPOT 或 ITL；
+- request throughput 和 output tokens/s；
+- SLO goodput；
+- waiting time；
+- preemption/recompute；
+- KV Cache usage；
+- Scheduler CPU time p50/p99；
+- 请求成功率；
+- 长请求和短请求分组尾延迟。
+
+SLO 必须在看正式结果前冻结。若没有业务 SLO，可根据 baseline 分布定义一组宽松/中等/严格阈值并全部报告，不能只选择最有利的一条。
+
+### 5.5 实验协议
+
+每个正式配置：
+
+1. 使用完全相同的请求内容、到达时间和随机种子；
+2. 固定模型、tokenizer、vLLM commit 和 server flags；
+3. 进行固定时长或固定请求数 warmup；
+4. 运行 500～1000 个 measured requests，Pilot 可缩小；
+5. 至少重复三次；
+6. 报告中位数、各次结果和误差范围，不只保留最好一次；
+7. 保存逐请求指标、控制器决策和 server log；
+8. 使用未参与阈值选择的 seed、阶段顺序或请求比例进行 held-out 复验。
+
+### 5.6 分级验收目标
+
+这些是目标，不是保证。
+
+合格结果：
+
+- Adaptive 在非平稳 held-out trace 上优于原始默认配置；
+- 相比最佳单一固定档位，SLO goodput 提高至少 5%，或者关键尾延迟降低至少 10%；
+- 总吞吐退化不超过 5%；
+- 长请求 p99 等待时间有界；
+- Scheduler CPU overhead 小于 3%；
+- 三次重复的改善方向一致。
+
+强结果：
+
+- SLO goodput 提高 10%～15%；或
+- p99 TTFT/TPOT 降低 15%～20%，且吞吐和公平性不明显退化；
+- held-out 的阶段顺序、请求比例变化后仍有收益。
+
+如果 Adaptive 只接近最佳固定档位，或者只在特定阶段有效，仍保留真实数据并解释原因，不把 Pilot 中最好的一次改写为正式结论。此时项目可降级为“调度取舍分析 + 负结果”，但简历 headline 必须相应收缩。
+
+---
+
+## 6. 支撑实验一：Automatic Prefix Caching
+
+本实验只使用 vLLM 原生 APC，不修改缓存算法。
+
+### 6.1 实验矩阵
+
+- APC：off / on；
+- Cache 状态：cold / warm；
+- Prefix reuse：0% / 50% / 100%；
+- Shared prefix length：1K / 2K / 4K tokens；
+- Prefix pools：少量热点 / 多前缀对照；
+- Offered load：低负载和 capacity knee 附近各一个点。
+
+### 6.2 观察指标
+
+- cached/query tokens 与 hit ratio；
+- TTFT、TPOT；
+- request throughput；
+- KV Cache usage 与 preemption；
+- cold 到 warm 的收敛过程。
+
+可以写：
+
+> 系统评估 vLLM APC 在不同前缀长度、复用率和缓存冷热状态下对 TTFT 与容量的影响，并解释 Prefix 命中条件和适用边界。
+
+不能写“实现或优化了 vLLM Prefix Cache”。除非后续确实新增源码改动，否则 APC 只能作为性能分析能力。
+
+---
+
+## 7. 支撑实验二：FP8 KV Cache
+
+本实验只使用 vLLM 已有 FP8 KV Cache 能力，不自行重写 FP8 PagedAttention。
+
+### 7.1 前置兼容性 Gate
+
+先确认：
+
+- RTX 5090、当前 CUDA/PyTorch/vLLM backend 支持目标 KV dtype；
+- 模型与 Attention backend 能够稳定运行；
+- KV scale 的来源与配置明确；
+- 同一模型、请求和 seed 下输出质量可比较；
+- 没有 silent fallback 到非 FP8 路径。
+
+Gate 不通过时，记录原因并切换为 CUDA Graph eager/non-eager 支撑实验，不为了凑关键词修改 Kernel。
+
+### 7.2 实验矩阵和指标
+
+- KV Cache dtype：默认 dtype / FP8；
+- Context length：短 / 中 / 长；
+- 并发：低负载 / capacity knee / 压力点；
+- 观察 KV 可用容量、可容纳 Token 数、peak VRAM、最大稳定并发、TTFT、TPOT、吞吐、preemption/OOM 和质量 sanity check。
+
+FP8 KV 的合理预期是容量改善；不能因为单 Token 存储字节减少，就预先宣称端到端吞吐翻倍。实际速度还取决于 Attention backend、scale、内存带宽、调度和其他计算开销。
+
+---
+
+## 8. 正确性与测试
+
+### 8.1 Controller 单元测试
+
+- 三个状态的进入和退出；
+- hysteresis 和最小驻留时间；
+- KV pressure guard；
+- `max_wait` 与 `min_prefill_progress`；
+- Budget 上下界；
+- 相同输入产生确定决策；
+- feature disabled 返回默认 Budget。
+
+### 8.2 Scheduler 回归测试
+
+- 总 Token Budget conservation；
+- Decode 保持进展；
+- Long Prefill 不发生无界饥饿；
+- 不改变 waiting queue 的稳定顺序；
+- abort、preemption、cleanup 正常；
+- prefix caching on/off 均能运行；
+- eager/non-eager smoke；
+- 原始 vLLM 相关 Scheduler tests 通过；
+- offline greedy 的输出 Token 与默认 Scheduler 对齐。
+
+### 8.3 GPU Smoke 与失败检查
+
+- 先用小模型运行短 trace；
+- 检查请求完成数、HTTP/SSE 错误和超时；
+- 检查进程和显存清理；
+- 检查 decision log 与真实 scheduled tokens 一致；
+- 再进入 3B Pilot 和 7B/8B Formal。
+
+性能提升不能来自漏请求、缩短输出、改变请求顺序语义或让长请求超时。
+
+---
+
+## 9. 仓库收敛方向
 
 ~~~text
-Forked from jranaraki/vllm-tuner.
-My work focuses on benchmark correctness, SLO-aware optimization,
-cross-layer observability, reproducibility, and scheduling experiments.
+vllm-tuner/
+├── patches/                     # 固定 vLLM commit 的 Scheduler patch
+├── src/
+│   ├── scheduler/               # controller/config/decision schema
+│   ├── workloads/               # 非平稳 trace 与 APC trace
+│   ├── benchmark/               # vLLM 启动、请求和指标采集
+│   └── analysis/                # 聚合、统计和绘图
+├── tests/
+│   ├── unit/
+│   └── integration/
+├── experiments/
+│   ├── adaptive_prefill/
+│   ├── prefix_cache/
+│   └── fp8_kv_cache/
+├── results/                     # 正式结果和 metadata
+├── docs/
+└── legacy/                      # 旧 SLOTune/TPE/simulator 说明
 ~~~
 
-My Contributions 表格应逐项链接到 commit、测试和实验 artifact。
+不急于物理删除旧代码。先在 README 和目录入口中降级为 Legacy，等新主线完整后再决定是否移动，避免在转型过程中丢失可复用 benchmark 能力。
 
-禁止：
+最终 README 只需要清楚展示：问题与固定 Budget 的取舍、Scheduler 插入点、三状态控制器、一张非平稳 trace 时间线、一张主结果图、APC/FP8 支撑图、复现命令和限制。
 
-- 把上游的 Optuna、HTML 报告说成从零实现
-- 用 2 请求 smoke 宣称性能提升
-- 未实测却声称多 GPU 性能
-- 只给百分比，不给模型、硬件、负载和版本
-- 隐藏无收益或负收益的实验
+---
 
-## 18. Demo 计划
+## 10. 实施里程碑与时间
 
-三到五分钟 Demo：
+### M0：版本冻结与默认基线，主动操作约 1～2 小时
 
-1. 展示一条命令执行 0.6B smoke。
-2. 打开预先生成的正式报告，不现场等待 7B/8B 冷启动。
-3. 展示 default capacity curve。
-4. 修改一个 TTFT/TPOT SLO，说明 goodput 目标变化。
-5. 展示失败 trial 被标为 INFEASIBLE，而不是成为 best。
-6. 对比固定 budget 与自适应 budget。
-7. 用 telemetry timeline 解释 queue、KV 和 GPU 的变化。
-8. 最后展示 holdout 结果和限制。
+- 固定 vLLM 0.16.0 commit；
+- 跑通小模型和 3B baseline；
+- 确认自定义 Scheduler 加载路径；
+- 验证已有 benchmark 指标是否可信。
 
-准备一个真实 debugging 故事：
+验收：默认 vLLM 可重复运行，同一 trace 三次结果波动可解释。
 
-- 表面现象：健康检查断连
-- 根因定位：vLLM worker 初始化失败
-- 深层原因：FlashInfer Python 与 cubin 版本不一致
-- 工程修复：版本锁定、数据盘脚本、结构化日志和依赖检查
-- 得到的经验：服务端断连只是症状，Infra 调试必须沿进程树和日志定位
+### M1：Scheduler instrumentation，主动操作约 1～3 小时
 
-## 19. 简历交付模板
+- 识别 Decode/Prefill Token；
+- 记录三个控制信号；
+- 记录 scheduled tokens 和 Scheduler CPU time；
+- 生成默认 Scheduler 的 step 时间线。
 
-完成前可诚实描述：
+验收：关闭控制器时不改变默认行为。
 
-- 基于开源 vLLM-Tuner 完成 RTX 5090 单卡端到端复现，打通数据加载、服务生命周期、GPU 请求、Optuna 搜索和报告导出，并修复本地数据、生成长度和健康检查等兼容问题。
-- 建立数据盘隔离和精确版本锁定的可复现实验环境，为数据加载、配置传递和服务启动补充自动化测试。
+### M2：三状态控制器，主动开发与调试约 3～8 小时
 
-完成正式项目后使用占位符替换真实数据：
+- 实现纯函数 Controller；
+- 接入 Prefill cap/budget；
+- 加入 max-wait、min-progress、hysteresis；
+- 完成单元测试和小模型 GPU smoke。
 
-- 构建 workload-aware vLLM SLO optimizer，实现官方 benchmark 编排、Prometheus/NVML 跨层遥测和 constrained TPE search；在 RTX 5090 + <model> + <workload> 下，将满足 <SLO> 的 goodput 从 <A> 提升至 <B>。
-- 实现自适应 Chunked Prefill / Token Budget 策略，根据 decode backlog、KV pressure 和 request age 动态分配预算；相比 FCFS/固定 budget 将 p99 TTFT 降低 <X>% 或 goodput 提升 <Y>%，并通过三次重复和 holdout trace 验证。
-- 定位并修复 TTFT、token throughput、peak VRAM、无效搜索参数和失败 Pareto handling 等 benchmark correctness 问题，建立带环境指纹、trace checksum 和逐请求原始数据的可复现流水线。
+验收：无错误、无 starvation，decision log 能解释状态切换。
 
-没有真实数据前不得填写提升百分比。
+### M3：核心 workload 与固定基线，主动操作约 2～4 小时，Pilot GPU 约 2～6 小时
 
-## 20. 风险与降级方案
+- 生成三阶段非平稳 trace；
+- 运行 default 和三档固定 Budget；
+- 做 capacity sweep；
+- 冻结阈值、SLO 和 Formal 配置。
 
-| 风险 | 影响 | 降级方案 |
+验收：不同阶段确实存在可测的 Budget 取舍；如果不存在，先修正研究假设或 workload，不直接调到“必胜”。
+
+### M4：Formal 与 held-out，后台 GPU 约 5～12 小时，结果审计约 1～3 小时
+
+- default/fixed/adaptive/oracle；
+- 三个负载点；
+- 三次重复；
+- held-out 阶段顺序和请求比例；
+- 长短请求分组分析。
+
+验收：形成真实的正结果或明确的适用边界。
+
+### M5：APC 与 FP8 KV 支撑实验，主动操作约 1～3 小时，后台 GPU 约 6～15 小时
+
+- APC cold/warm 与复用率矩阵；
+- FP8 compatibility gate；
+- FP8 容量、延迟和质量实验；
+- 不兼容则执行 CUDA Graph fallback。
+
+验收：每组结论都有机制解释，不把开关实验写成源码贡献。
+
+### M6：仓库减重与面试材料，主动操作约 1～3 小时
+
+- README 主线切换；
+- 旧 SLOTune 标记 Legacy；
+- 保存 patch、配置、结果和复现命令；
+- 整理面试问题与失败边界；
+- 学习文档是否补充由后续单独决定。
+
+正常情况下总计约 10～20 小时主动开发/分析，加上约 12～30 小时可脱离 VSCode 的后台 GPU 实验，日历时间约 3～5 天。若遇到 vLLM 构建、FP8 backend 兼容或核心结果不明显，需要增加针对性调试，风险区间约 5～10 天。
+
+### 10.1 长时间后台实验与关闭 VSCode 规则
+
+只有同时满足以下条件的任务，才算“可以关闭 VSCode、不需要中途照看”的后台实验：
+
+1. 预计连续运行时间 **超过 1 小时**；不足 1 小时的实验在当前工作阶段直接完成，不单独安排后台长跑；
+2. 同一模型、代码路径、启动方式和 artifact 流程已经通过前台 Smoke/Pilot；
+3. 代码、阈值、trace、SLO、实验矩阵和随机种子已经冻结，运行中不需要人工选择下一组参数；
+4. 每个 Run 都有独立 ID、超时、状态文件、原始日志、逐请求结果和失败原因；
+5. Suite 支持断点续跑，只跳过完整且校验通过的 Run，不因 VSCode 断开而丢失整个矩阵；
+6. vLLM 子进程、benchmark、telemetry 和 cleanup 都由统一 runner 管理；
+7. 单个 Run 失败会被记录并进入下一个独立 Run；连续出现相同致命错误、GPU 丢失或磁盘空间不足时，watchdog 自动停止整个 Suite；
+8. 后台命令脱离 VSCode/SSH 会话运行，使用 `nohup + setsid`，或在环境可用时使用 `tmux`，并保存 PID、启动时间和总日志。
+
+以下任务即使技术上可以放到后台，也**不算**可无人值守长实验：
+
+- 第一次编译或加载修改后的 vLLM；
+- 第一次 Scheduler GPU Smoke；
+- FP8 KV compatibility gate；
+- 仍在选择阈值、调整 workload 或定位错误的 Pilot；
+- 预期不足 1 小时的测试；
+- 需要看完当前结果才能决定下一步参数的串行调试；
+- 没有 timeout、artifact、cleanup 或 resume 保护的临时命令。
+
+### 10.2 实际启动和通知流程
+
+达到后台长跑阶段时，执行顺序固定为：
+
+1. 前台完成等价路径的 Smoke/Pilot，并检查请求成功率、指标和清理；
+2. 生成冻结的 Suite manifest 和待运行矩阵；
+3. 以脱离终端的方式启动后台 Suite；
+4. 检查 PID/进程组存在、日志持续更新、manifest 与输出目录正确、GPU 已开始工作；
+5. 确认任务不依赖当前 VSCode 会话后，再通知用户可以断开。
+
+届时必须向用户明确发送类似下面的信息，而不是只说“已经启动”：
+
+> 后台正式实验已经启动并完成脱离会话检查，现在可以关闭 VSCode。请保持 AutoDL 实例开机，不要关机或释放。预计结束时间、PID、日志路径、结果目录和恢复/状态检查命令如下：……
+
+通知中必须包含：
+
+- 正在运行的 Suite 名称和实验范围；
+- 预计总时长和大致结束时间；
+- PID/进程组；
+- 主日志路径；
+- artifact/result 根目录；
+- 查看状态的只读命令；
+- 中断后的 resume 命令；
+- “关闭 VSCode 可以，关闭/释放 AutoDL 实例不可以”的提醒。
+
+关闭 VSCode 后，后台 runner 只负责按照冻结矩阵执行、记录失败、清理进程和保存结果，不会自行修改源码、改变阈值或选择性重跑以追求更好数字。用户重新连接后，再对全部结果做审计并决定下一阶段。
+
+### 10.3 里程碑顺序与完成通知
+
+正常执行顺序固定为：
+
+~~~text
+M0 版本冻结与默认基线
+  ↓
+M1 Scheduler instrumentation
+  ↓
+M2 三状态控制器
+  ↓
+M3 核心 workload、fixed baselines 与参数冻结
+  ↓
+M4 Formal、重复实验与 held-out
+  ↓
+M5 APC、FP8 KV 支撑实验
+  ↓
+M6 仓库减重、README 与面试材料
+~~~
+
+除非出现明确的技术依赖变化，否则不交换 M0～M6 的主顺序。可以提前准备不占 GPU 的脚本或配置，但不能在 M3 尚未冻结阈值、SLO 和 Formal 矩阵时提前宣称 M4 已开始，也不能在 M4 结果尚未审计时完成最终 README。
+
+每完成一个里程碑，都必须单独向用户发送一次完成通知，不将多个阶段静默合并。通知至少包含：
+
+1. 当前完成的里程碑和结论；
+2. 实际修改的主要文件或 patch；
+3. 执行过的测试/实验及其通过、失败和跳过数量；
+4. 是否达到该里程碑的验收条件；
+5. 与原计划相比的偏差、未解决风险和真实负结果；
+6. 结果或日志的本地路径；
+7. 下一里程碑的内容、主动操作时间和预计后台时间；
+8. 当前是否已经达到“可以关闭 VSCode”的条件。
+
+建议通知格式：
+
+> **M2 已完成**：三状态控制器和回归测试已通过；修改文件为……；测试结果为……；当前风险为……；下一步进入 M3，预计主动操作……、后台 Pilot……。当前仍需调试/当前可以关闭 VSCode。
+
+只有满足本阶段全部验收条件时才使用“已完成”。如果只完成一部分，必须写“进行中”并列出剩余项；如果发生阻塞、需要修改研究问题或改变 M0～M6 顺序，必须先说明原因和影响，不能自行扩大范围。
+
+对于 M4/M5 这类可能包含长时间后台 Suite 的阶段，需要区分两次通知：
+
+1. **后台启动通知**：Suite 通过脱离会话检查后，告知可以关闭 VSCode，并提供 PID、日志、结果目录和预计结束时间；
+2. **里程碑完成通知**：后台运行结束且结果完成完整性审计后，报告该 M 是否真正通过验收。
+
+后台任务完成时如果用户仍处于断开状态，结果先原样保存在 artifact 目录；下一次恢复协作后立即进行审计并发送里程碑完成通知，不在无人交互状态下擅自修改实验方案或进入需要新判断的下一里程碑。
+
+---
+
+## 11. 风险控制
+
+| 风险 | 概率 | 控制方式 |
+|---|---:|---|
+| vLLM 默认策略已经很好，Adaptive 无明显收益 | 中 | 使用真实非平稳 trace、固定基线和 capacity sweep；不保证必胜 |
+| workload 过度人工设计 | 中 | held-out seed、阶段顺序、请求比例；报告低负载和失败场景 |
+| 阈值过拟合 | 中 | Pilot 冻结参数，Formal 不再调；与三档固定值和 Oracle 对比 |
+| Scheduler 接口不稳定 | 低～中 | 固定 v0.16.0 commit，保存 patch 和回归测试 |
+| 控制器增加 CPU 开销 | 低 | 三信号、三状态、O(1) 决策，测 p99 Scheduler time |
+| 动态 Batch Shape 影响 CUDA Graph/吞吐 | 中 | 保持有限档位并测 eager/non-eager、GPU gap 和吞吐 |
+| 长 Prefill 饥饿 | 低～中 | max-wait、min-progress、分组 p99 wait |
+| FP8 KV 不兼容或 silent fallback | 中 | compatibility gate、日志和显存证据；失败则降级 |
+| FP8 容量改善但延迟无收益 | 中～高 | 将容量作为主结论，速度结果如实报告 |
+| 7B/8B 无法完成 | 中 | 3B 完成功能和实验，正式结论标明模型范围 |
+| 为得到好数字反复改 workload | 高风险行为 | 预注册 Formal 配置、保留全部正式结果、只用 Pilot 调参 |
+
+“需要好的结果”不能转化为选择性隐藏负结果。能提高成功概率的正确做法是先构造机制明确、又有 held-out 的非平稳场景，而不是修改统计口径。
+
+---
+
+## 12. 学习文档覆盖与补充范围
+
+现有《vLLM面试教学版-从零重构》对本项目的理论和面试知识覆盖约 85%～90%，对具体实现准备约 65%～75%。
+
+| 项目内容 | 主要学习模块 | 覆盖情况 |
 |---|---|---|
-| 7B/8B 模型暂时不可获取 | 无法跑正式压力实验 | 先用 0.6B 验证正确性，正式结果延后 |
-| vLLM 内部 scheduler API 变化 | 集成成本过高 | 固定 commit，先做 simulator/入口 admission |
-| 单次 trial 冷启动过慢 | 搜索成本过高 | 缩小到 12–16 trials、缓存编译产物 |
-| 官方与自有指标不一致 | 结果不可信 | 以官方 bench 为 reference，逐项解释差异 |
-| Prometheus 指标版本变化 | 解析失败 | 建立 metric alias 和缺失指标显式降级 |
-| 自适应策略无收益 | 项目结论不理想 | 保留负结果，分析 workload 条件和 overhead |
-| 调度策略造成饥饿 | 结果不可接受 | aging、max_wait、minimum progress |
-| 结果过拟合单一 trace | 无法推广 | holdout workload 和多 request rate 验证 |
-| GPU 温度/频率漂移 | 重复结果波动 | 随机化顺序、记录 clock/temperature、重复运行 |
+| V1 请求生命周期 | M01 | 充分 |
+| Scheduler、Continuous Batching | M02 | 充分 |
+| Chunked Prefill 与 Token Budget | M02 | 充分 |
+| Paged KV Cache、APC | M02 | 充分 |
+| FP8、scale、硬件兼容 | M03 | 原理充分，FP8 KV 具体路径需补 |
+| CUDA Graph fallback | M04/M08 | 原理覆盖 |
+| TTFT、TPOT、Goodput、Profiler | M08 | 充分 |
+| 三状态控制器与 hysteresis | 暂无专项 | 需补 |
+| v0.16.0 Scheduler 接入和测试 | 暂无专项 | 需结合源码补 |
+| 非平稳 trace、Oracle、held-out | 暂无专项 | 需补 |
 
-## 21. 明确不做的范围
+项目实施前后只需新增约 8～12 小时专项学习：
 
-核心版本不做：
+1. v0.16.0 `Scheduler.schedule()` 的真实执行顺序；
+2. Controller 状态机、阈值、hysteresis 和 starvation bound；
+3. 动态 Budget 与 CUDA Graph/batch shape 的关系；
+4. FP8 KV Cache 的实际 dtype、scale 与 backend 路径；
+5. 非平稳负载、Oracle 上界和 held-out 实验设计。
 
-- Web 管理后台
-- Kubernetes 部署
-- 在线无重启调参
-- 多机、多 GPU 性能结论
-- Tensor Parallel / Pipeline Parallel 优化
-- 自研完整 PagedAttention Kernel
-- FP8 KV Cache 作为主线
-- Speculative Decoding 作为主线
-- 模型训练或量化训练
-- 生产级多租户鉴权、计费和网关
+本阶段不修改学习文档；等代码和实验稳定后，再把真实实现补进教学材料，避免先写一套最后没有使用的方案。
 
-可以写入 Future Work，但不得包装成已完成能力：
+---
 
-- FP8 KV Cache ablation
-- N-gram speculative decoding
-- Prefix-aware admission
-- vLLM scheduler plugin
-- 多 GPU TP/DP/P-D 架构
-- 自动扩缩容与容量模型
 
-## 22. Definition of Done
+---
 
-核心项目只有同时满足以下条件才算完成：
+## 14. Definition of Done
 
-- [ ] 正式指标来自可靠 streaming 或官方 benchmark
-- [ ] TTFT、TPOT、ITL、E2E、tokens 和 goodput 有单元测试
-- [ ] /metrics 和 NVML 在测量窗口连续采样
-- [ ] 失败 trial 不会污染最优结果
-- [ ] default、random、TPE 使用相同预算
-- [ ] 至少一个 3B–8B 正式模型实验
-- [ ] 至少两类 workload
-- [ ] baseline 和 top candidates 至少重复三次
-- [ ] 至少一份 holdout 结果
-- [ ] 固定 token-budget ablation 完成
-- [ ] 自适应策略至少完成 simulator 和公平性测试
-- [ ] 环境、trace、参数、原始请求和日志可追溯
-- [ ] README 明确上游来源与个人贡献
-- [ ] Demo 可在五分钟内完成
-- [ ] 不使用 smoke 数据冒充性能结论
-- [ ] 所有大文件继续位于数据盘
+### 必须完成
 
-## 23. 首批实现任务
+- [ ] 固定 vLLM 0.16.0 commit 和完整实验环境；
+- [ ] 自定义 Scheduler 或最小 fork patch 真实运行在 vLLM V1；
+- [ ] 实现 `PROTECT_DECODE`、`BALANCED`、`DRAIN_PREFILL` 三状态；
+- [ ] 只使用三个核心控制信号；
+- [ ] 实现 hysteresis、max-wait 和 min-progress；
+- [ ] feature disabled 时退化为默认 Scheduler；
+- [ ] 单元测试、Scheduler 回归和 GPU smoke 通过；
+- [ ] 完成 default + 三档 fixed + adaptive + offline Oracle；
+- [ ] 完成 70%/90%/105% 三个负载点或记录合理降级；
+- [ ] 每个 Formal 配置至少重复三次；
+- [ ] 完成 held-out trace；
+- [ ] 分组报告长短请求的尾延迟和等待；
+- [ ] 保存 patch、trace、配置、日志和逐请求结果；
+- [ ] APC/FP8 明确标记为原生能力实验；
+- [ ] README 不再以 SLOTune 平台为主线；
+- [ ] 不使用 CPU simulator 作为 headline result。
 
-建议按以下 PR/commit 顺序推进：
+### 正结果验收
 
-1. benchmark: add typed request results and correct metric reducer
-2. benchmark: integrate official vllm bench serve adapter
-3. profiling: add Prometheus and continuous NVML telemetry
-4. runtime: introduce trial state machine and failure taxonomy
-5. tuning: replace weighted objectives with constrained goodput
-6. tuning: add equal-budget random baseline and holdout runner
-7. scheduling: add deterministic token-budget simulator
-8. scheduling: implement adaptive token-budget policy
-9. experiments: run capacity and fixed-budget ablations
-10. docs: publish results, methodology, limitations and demo
+- [ ] Adaptive 在 held-out 非平稳 trace 上稳定优于 default；
+- [ ] 相比最佳单一 fixed 至少满足一项：goodput +5%，或关键 p99 -10%；
+- [ ] throughput 退化不超过 5%；
+- [ ] Scheduler CPU overhead 小于 3%；
+- [ ] 没有隐藏失败、漏请求和无界 starvation。
 
-第一步不要直接写调度器。先完成 M1 的指标正确性，否则后续任何优化数字都不可信。
+### 可选加分，不阻塞完成
 
-## 24. 官方参考资料
+- [ ] 第二个模型复验；
+- [ ] 第二组请求比例 held-out；
+- [ ] FP8 KV 在 capacity knee 附近证明容量收益；
+- [ ] APC 实验形成清晰的冷/热缓存边界图；
+- [ ] patch 代码风格接近 upstream，但不承诺提交 upstream。
 
-- vLLM Benchmark CLI
-  https://docs.vllm.ai/en/latest/benchmarking/cli/
-- vLLM Parameter Sweeps
-  https://docs.vllm.ai/en/stable/benchmarking/sweeps/
-- vLLM Metrics Design
-  https://docs.vllm.ai/en/latest/design/metrics/
-- vLLM Online Serving /metrics
-  https://docs.vllm.ai/en/latest/serving/online_serving/
-- vLLM Optimization and Tuning
-  https://docs.vllm.ai/en/latest/configuration/optimization/
-- vLLM Automatic Prefix Caching
-  https://docs.vllm.ai/en/stable/features/automatic_prefix_caching/
-- vLLM Prefix Caching Design
-  https://docs.vllm.ai/en/v0.21.0/design/prefix_caching/
-- vLLM Speculative Decoding，Future Work
-  https://docs.vllm.ai/en/latest/features/speculative_decoding/
+---
+
+## 15. 实施前结论
+
+后续执行顺序固定为：
+
+1. 先冻结版本并验证 default；
+2. 再做 instrumentation；
+3. 只实现 Adaptive Scheduler；
+4. 先用 fixed baselines 证明问题存在；
+5. 冻结参数后再跑 Formal 和 held-out；
+6. 最后补 APC、FP8 KV 支撑实验；
+7. 真实结果稳定后再改 README 和学习文档。
+
+除非后续实验明确表明单一 Scheduler 改动完全无法形成项目，本版不自动升级到 Prefix-aware Admission、BlockPool eviction 或 Triton Kernel。

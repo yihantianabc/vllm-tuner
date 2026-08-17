@@ -20,6 +20,7 @@ from vllm_tuner.reporting.plots import summarize_capacity_rows
 from vllm_tuner.reporting.report import generate_report
 from vllm_tuner.runtime.controller import TrialController
 from vllm_tuner.runtime.failures import UnsafeCleanupError
+from vllm_tuner.runtime.server import uses_slotune_scheduler
 from vllm_tuner.scheduling import (
     DEFAULT_FIXED_BUDGETS,
     SimulationConfig,
@@ -586,6 +587,11 @@ class SLOTuneExperimentRunner:
             required_evidence.add("prometheus.jsonl")
             if self.config.telemetry.collect_nvml:
                 required_evidence.add("nvml.jsonl")
+        if (
+            uses_slotune_scheduler(self.config)
+            and self.config.adaptive_prefill.decision_log_enabled
+        ):
+            required_evidence.add("scheduler-decisions.jsonl")
         unavailable_required = sorted(
             name for name in required_evidence if not status["files"][name]["data_available"]
         )
@@ -709,6 +715,11 @@ class SLOTuneExperimentRunner:
                     required_evidence.add("prometheus.jsonl")
                     if self.config.telemetry.collect_nvml:
                         required_evidence.add("nvml.jsonl")
+                if (
+                    uses_slotune_scheduler(self.config)
+                    and self.config.adaptive_prefill.decision_log_enabled
+                ):
+                    required_evidence.add("scheduler-decisions.jsonl")
                 self.artifacts.validate_trial_artifacts(
                     trial_id,
                     require_telemetry=False,

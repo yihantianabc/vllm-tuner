@@ -1,0 +1,79 @@
+# M2: force observable chunking and state changes on the real patched V1 Scheduler.
+model: "/root/autodl-tmp/models/Qwen3-0.6B"
+
+gpu:
+  device_ids: [0]
+  count: 1
+
+slo:
+  ttft_ms: 10000
+  tpot_ms: 1000
+  e2e_ms: 30000
+
+constraints:
+  max_error_rate: 0.0
+  max_peak_vram_mb: 31000
+  max_memory_utilization: 0.95
+  require_no_oom: true
+  require_server_alive: true
+
+search_space:
+  gpu_memory_utilization: [0.35, 0.35]
+  max_num_batched_tokens: [1024]
+  max_num_seqs: [16]
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+workload:
+  name: "mixed"
+  dataset_name: "synthetic:mixed"
+  sample_size: 8
+  prompt_length_distribution: "weighted"
+  warmup_requests: 1
+  max_concurrency: 4
+  request_rate: 20.0
+  burstiness: 1.0
+  max_tokens: 64
+  fixed_input_tokens: 1024
+  fixed_output_tokens: 64
+  ignore_eos: true
+  seed: 2026
+  benchmark_backend: "sse"
+
+telemetry:
+  enabled: true
+  interval_ms: 200
+  collect_nvml: true
+
+baseline:
+  enabled: false
+
+study:
+  trial_budget: 1
+  timeout_minutes: 20
+  prune_enabled: false
+  n_startup_trials: 1
+  methods: ["random"]
+  repeat_count: 1
+  top_candidates: 1
+  holdout_enabled: false
+  resume: false
+
+adaptive_prefill:
+  enabled: true
+  decision_log_enabled: true
+  low_prefill_cap: 128
+  balanced_prefill_cap: 256
+  high_prefill_cap: 512
+  decode_backlog_high: 1
+  oldest_prefill_wait_ms: 10
+  kv_usage_high: 0.99
+  min_prefill_progress: 64
+  max_wait_ms: 50
+  hysteresis_steps: 1
+  min_state_residency_steps: 1
+
+vllm_args:
+  max-model-len: 2048
+  no-async-scheduling: true
+  scheduler-cls: "vllm_tuner.scheduler.runtime.AdaptivePrefillScheduler"

@@ -73,6 +73,7 @@ def test_server_environment_snapshot_keeps_execution_settings_only(tmp_path) -> 
     server = ManagedVLLMServer(TuningConfig(model="test-model"), trial_dir=tmp_path)
     environment = {
         "OMP_NUM_THREADS": "4",
+        "SLOTUNE_SCHEDULER_DECISION_LOG": "/results/decisions.jsonl",
         "TORCHINDUCTOR_CACHE_DIR": "/cache/inductor",
         "CUDA_VISIBLE_DEVICES": "0",
         "TOKENIZERS_PARALLELISM": "false",
@@ -99,6 +100,7 @@ def test_server_environment_snapshot_keeps_execution_settings_only(tmp_path) -> 
         "HF_HOME": "/cache/hf",
         "HUGGINGFACE_HUB_CACHE": "/cache/hub",
         "OMP_NUM_THREADS": "4",
+        "SLOTUNE_SCHEDULER_DECISION_LOG": "/results/decisions.jsonl",
         "TMPDIR": "/scratch/tmp",
         "TOKENIZERS_PARALLELISM": "false",
         "TORCHINDUCTOR_CACHE_DIR": "/cache/inductor",
@@ -138,6 +140,39 @@ async def test_start_records_effective_safe_environment(tmp_path, monkeypatch) -
     assert "HF_TOKEN" not in payload["environment"]
     assert "HTTPS_PROXY" not in payload["environment"]
     assert server._compute_pids_baseline == {55}
+
+
+@pytest.mark.asyncio
+async def test_start_injects_slotune_scheduler_config_and_trial_log(tmp_path, monkeypatch) -> None:
+    class FakeProcess:
+        pid = 12346
+
+        @staticmethod
+        def poll():
+            return None
+
+    captured_environment = {}
+
+    def fake_popen(*args, **kwargs):
+        captured_environment.update(kwargs["env"])
+        return FakeProcess()
+
+    monkeypatch.setattr(server_module.subprocess, "Popen", fake_popen)
+    config = TuningConfig(
+        model="test-model",
+        vllm_args={"scheduler-cls": "vllm_tuner.scheduler.runtime.AdaptivePrefillScheduler"},
+    )
+    server = ManagedVLLMServer(config, trial_dir=tmp_path)
+    monkeypatch.setattr(server, "_compute_pids", lambda: ([], None))
+
+    await server.start({})
+
+    decision_path = str((tmp_path / "scheduler-decisions.jsonl").resolve())
+    assert captured_environment["SLOTUNE_SCHEDULER_DECISION_LOG"] == decision_path
+    scheduler_config = json.loads(captured_environment["SLOTUNE_ADAPTIVE_PREFILL_CONFIG"])
+    assert scheduler_config["enabled"] is False
+    command = json.loads(server.command_path.read_text(encoding="utf-8"))
+    assert command["environment"]["SLOTUNE_SCHEDULER_DECISION_LOG"] == decision_path
 
 
 class ExitedLeader:
