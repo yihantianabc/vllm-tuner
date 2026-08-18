@@ -22,8 +22,8 @@ m1_boundaries:
   root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m1-capacity-formal-001-boundaries-v2"
 
 smoke_artifact:
-  experiment_id: "longctx-v5-m2-fp8-smoke-001"
-  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m2-fp8-smoke-001"
+  experiment_id: "longctx-v5-m2-fp8-smoke-002"
+  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m2-fp8-smoke-002"
 
 profiles:
   - profile_id: "bf16-auto"

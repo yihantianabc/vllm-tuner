@@ -145,7 +145,7 @@ def _quality_prompt(
     probe_count: int,
     tokenizer: Any,
 ) -> tuple[str, int]:
-    """Build an exact-length long-context retrieval prompt with one scored marker."""
+    """Build an exact-length retrieval prompt whose question is the final token suffix."""
     filler = (
         "The archived deployment ledger records deterministic request timing, token counts, "
         "cache geometry, and cleanup evidence for an inference service. "
@@ -155,23 +155,30 @@ def _quality_prompt(
         "This code is authoritative.\n"
     )
     suffix = (
-        f"\nQuestion: What is the authoritative retrieval code? Reply with exactly {marker} "
-        "and no other words. Ignore padding after this instruction. [END]\n"
+        "\nQuestion: What is the authoritative retrieval code? Reply with the code and no "
+        "other words.\nAnswer:"
     )
     filler_ids = list(tokenizer.encode(filler, add_special_tokens=False))
     needle_ids = list(tokenizer.encode(needle, add_special_tokens=False))
     suffix_ids = list(tokenizer.encode(suffix, add_special_tokens=False))
-    remaining = target_tokens - len(needle_ids) - len(suffix_ids)
-    if remaining <= 0:
-        raise ValueError("quality prompt target is too short for its scored instruction")
-    placement = round(remaining * (probe_index + 1) / (probe_count + 1))
-    before = _repeat_to_size(filler_ids, placement)
-    after = _repeat_to_size(filler_ids, remaining - placement)
-    prompt = tokenizer.decode([*before, *needle_ids, *after, *suffix_ids])
-    prompt, counted = _fit_exact_token_count(prompt, target_tokens, tokenizer)
-    if marker not in prompt or "[END]" not in prompt:
-        raise ValueError("quality prompt fitting removed its scored instruction")
-    return prompt, counted
+    prefix_target = target_tokens - len(suffix_ids)
+    for _ in range(16):
+        remaining = prefix_target - len(needle_ids)
+        if remaining <= 0:
+            raise ValueError("quality prompt target is too short for its scored instruction")
+        placement = round(remaining * (probe_index + 1) / (probe_count + 1))
+        before = _repeat_to_size(filler_ids, placement)
+        after = _repeat_to_size(filler_ids, remaining - placement)
+        prefix = tokenizer.decode([*before, *needle_ids, *after])
+        prefix, _ = _fit_exact_token_count(prefix, prefix_target, tokenizer)
+        prompt = prefix + suffix
+        counted = len(tokenizer.encode(prompt, add_special_tokens=False))
+        if counted == target_tokens:
+            if marker not in prompt or not prompt.endswith("Answer:"):
+                raise ValueError("quality prompt fitting removed its scored instruction")
+            return prompt, counted
+        prefix_target += target_tokens - counted
+    raise ValueError("quality prompt could not preserve an exact final question suffix")
 
 
 def _quality_trace(

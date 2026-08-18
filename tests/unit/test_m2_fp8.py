@@ -102,6 +102,7 @@ def test_quality_trace_is_fixed_exact_length_and_scored() -> None:
     assert markers == replay_markers
     assert all(entry.input_tokens == 480 for entry in trace.entries)
     assert all(markers[entry.request_id] in entry.prompt for entry in trace.entries)
+    assert all(entry.prompt.endswith("Answer:") for entry in trace.entries)
 
 
 def _record(profile_id: str, cached_tokens: int, goodput: float) -> M2FP8TrialRecord:
