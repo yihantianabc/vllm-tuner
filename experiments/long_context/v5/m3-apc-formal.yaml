@@ -1,0 +1,69 @@
+project_line: "longctx-v5"
+milestone: "M3"
+experiment_kind: "automatic-prefix-caching"
+evidence_role: "formal"
+
+model:
+  local_path: "/root/autodl-tmp/models/Qwen2.5-7B-Instruct"
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/qwen25-7b-instruct.model.lock.yaml"
+
+runtime:
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/upstream-runtime.lock.yaml"
+
+artifacts:
+  root: "/root/autodl-tmp/longctx-v5-artifacts"
+
+gpu:
+  device_ids: [0]
+  count: 1
+
+m1_boundaries:
+  experiment_id: "longctx-v5-m1-capacity-formal-001-boundaries-v2"
+  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m1-capacity-formal-001-boundaries-v2"
+
+m2_negative_artifacts:
+  - experiment_id: "longctx-v5-m2-fp8-smoke-002"
+    root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m2-fp8-smoke-002"
+  - experiment_id: "longctx-v5-m2-fp8-smoke-003"
+    root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m2-fp8-smoke-003"
+  - experiment_id: "longctx-v5-m2-fp8-smoke-004"
+    root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m2-fp8-smoke-004"
+
+smoke_artifact:
+  experiment_id: "longctx-v5-m3-apc-smoke-001"
+  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m3-apc-smoke-001"
+
+profiles:
+  - profile_id: "apc-off"
+    enable_prefix_caching: false
+  - profile_id: "apc-on"
+    enable_prefix_caching: true
+
+context:
+  context_id: "context-8k"
+  total_kv_tokens: 8192
+  output_tokens: 128
+  load_id: "mid"
+  offered_requests_per_second: 1.0
+  slo:
+    ttft_ms: 3500.0
+    tpot_ms: 120.0
+    e2e_ms: 16000.0
+    max_error_rate_ppm: 0
+
+protocol:
+  repeats: 3
+  requests_per_reuse: 24
+  reuse_percents: [0, 50, 100]
+  prefix_tokens: [2048, 4096]
+  measurement_seed: 2026081841
+  warmup_seed: 2026081842
+  client_max_concurrency: 72
+  request_timeout_seconds: 600.0
+  burstiness: 1.0
+  ignore_eos: true
+  boundary_pool_sizes: [48, 72]
+  boundary_prefix_tokens: 4096
+  boundary_tail_tokens: 64
+  boundary_output_tokens: 8
+  boundary_request_interval_seconds: 1.0
