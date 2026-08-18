@@ -302,11 +302,14 @@ def _validate_counters(
     counters: Mapping[str, Mapping[str, Any]],
     requests: Sequence[RequestResult],
     cached_tokens: Sequence[int],
+    apc_enabled: bool,
 ) -> tuple[int, int, int]:
+    prompt_tokens = sum(request.input_tokens for request in requests)
     expected = {
-        "prompt_tokens_total": sum(request.input_tokens for request in requests),
+        "prompt_tokens_total": prompt_tokens,
         "generation_tokens_total": sum(request.output_tokens for request in requests),
-        "prefix_cache_queries": sum(request.input_tokens for request in requests),
+        # Locked vLLM does not issue or count prefix-cache queries when APC is disabled.
+        "prefix_cache_queries": prompt_tokens if apc_enabled else 0,
         "prefix_cache_hits": sum(cached_tokens),
     }
     observed: dict[str, int] = {}
@@ -380,6 +383,7 @@ def _derive_core_record(
         counters=counters,
         requests=requests,
         cached_tokens=[cached_by_id[request.request_id] for request in requests],
+        apc_enabled=profile.enable_prefix_caching,
     )
     slo_rows = result.client.get("request_slo")
     if not isinstance(slo_rows, list) or any(not isinstance(row, Mapping) for row in slo_rows):
@@ -450,7 +454,7 @@ def _derive_core_record(
         prefix_cache_queries=queries,
         prefix_cache_hits=hits,
         expected_prefix_cache_hits=sum(expected_hits.values()),
-        hit_ratio=hits / queries,
+        hit_ratio=hits / queries if queries else 0.0,
         exact_hit_tokens=True,
         completion_fraction=1.0,
         achieved_requests_per_second=_finite_number(
@@ -523,6 +527,7 @@ def _derive_boundary_record(
         counters=counters,
         requests=requests,
         cached_tokens=cached,
+        apc_enabled=True,
     )
     timeout_count = sum(request.status == RequestStatus.TIMEOUT for request in requests)
     oom_count = _server_event_count(server_log, (r"CUDA out of memory", r"\bOOM\b"))

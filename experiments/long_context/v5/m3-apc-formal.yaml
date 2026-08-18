@@ -30,8 +30,8 @@ m2_negative_artifacts:
     root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m2-fp8-smoke-004"
 
 smoke_artifact:
-  experiment_id: "longctx-v5-m3-apc-smoke-001"
-  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m3-apc-smoke-001"
+  experiment_id: "longctx-v5-m3-apc-smoke-002"
+  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m3-apc-smoke-002"
 
 profiles:
   - profile_id: "apc-off"

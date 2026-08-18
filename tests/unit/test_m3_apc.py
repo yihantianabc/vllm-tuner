@@ -5,8 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from vllm_tuner.benchmarks.models import RequestResult, RequestStatus
 from vllm_tuner.longctx.m3_apc_config import M3APCProfile
-from vllm_tuner.longctx.m3_apc_runner import _command_evidence, _request_cached_tokens
+from vllm_tuner.longctx.m3_apc_runner import (
+    _command_evidence,
+    _request_cached_tokens,
+    _validate_counters,
+)
 from vllm_tuner.longctx.m3_apc_workload import (
     RAGCorpus,
     build_m3_boundary_trace,
@@ -166,3 +171,27 @@ def test_command_and_usage_evidence_fail_closed(tmp_path: Path) -> None:
     }
     assert _request_cached_tokens(row) == 32
     assert _request_cached_tokens({"input_tokens": 96, "metadata": {"usage": {}}}) == 0
+
+    request = RequestResult(
+        request_id="off-query",
+        input_tokens=96,
+        output_tokens=8,
+        status=RequestStatus.SUCCESS,
+    )
+    counters = {
+        name: {"available": True, "reset_count": 0, "delta": value}
+        for name, value in {
+            "prompt_tokens_total": 96,
+            "generation_tokens_total": 8,
+            "prefix_cache_queries": 0,
+            "prefix_cache_hits": 0,
+            "num_preemptions_total": 0,
+        }.items()
+    }
+    queries, hits, preemptions = _validate_counters(
+        counters=counters,
+        requests=[request],
+        cached_tokens=[0],
+        apc_enabled=False,
+    )
+    assert (queries, hits, preemptions) == (0, 0, 0)
