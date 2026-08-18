@@ -1,0 +1,64 @@
+project_line: "longctx-v5"
+milestone: "M5"
+experiment_kind: "decode-tail-non-inferiority"
+evidence_role: "formal"
+
+model:
+  local_path: "/root/autodl-tmp/models/Qwen2.5-7B-Instruct"
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/qwen25-7b-instruct.model.lock.yaml"
+
+runtime:
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/upstream-runtime.lock.yaml"
+
+artifacts:
+  root: "/root/autodl-tmp/longctx-v5-artifacts"
+
+gpu:
+  device_ids: [0]
+  count: 1
+
+m4_artifact:
+  experiment_id: "longctx-v5-m4-chunked-formal-001"
+  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m4-chunked-formal-001"
+
+smoke_artifact:
+  experiment_id: "longctx-v5-m5-decode-tail-smoke-001"
+  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m5-decode-tail-smoke-001"
+
+profiles:
+  - profile_id: "production-default"
+    long_prefill_token_threshold: null
+  - profile_id: "decode-tail-1024"
+    long_prefill_token_threshold: 1024
+
+slo:
+  ttft_ms: 3500.0
+  tpot_ms: 120.0
+  e2e_ms: 16000.0
+  max_error_rate_ppm: 0
+
+protocol:
+  repeats: 3
+  decode_requests: 48
+  decode_input_tokens: 256
+  decode_output_tokens: 256
+  decode_interval_seconds: 1.5
+  decode_arrival_jitter_fraction: 0.1
+  long_output_tokens: 32
+  warmup_requests: 3
+  client_max_concurrency: 64
+  request_timeout_seconds: 600.0
+  ignore_eos: true
+  cohorts:
+    - cohort_id: "target"
+      prompt_seed: 2026081851
+      arrival_seed: 2026081853
+      warmup_seed: 2026081852
+      long_prefill_tokens: [4096, 8192, 4096]
+      injection_offsets_seconds: [17.25, 35.25, 53.25]
+    - cohort_id: "held-out"
+      prompt_seed: 2026081951
+      arrival_seed: 2026081953
+      warmup_seed: 2026081952
+      long_prefill_tokens: [8192, 4096, 8192]
+      injection_offsets_seconds: [13.5, 33.0, 56.25]
