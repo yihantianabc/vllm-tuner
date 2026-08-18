@@ -63,81 +63,98 @@ def test_formal_3b_configs_have_equal_budget_repeats_and_holdout() -> None:
     assert profiles.keys() == {"chat", "rag"}
 
 
-def test_readme_preserves_attribution_and_completed_evidence_boundaries() -> None:
-    """Project identity, formal evidence, and smoke boundaries remain prominent."""
+def test_readme_preserves_attribution_and_current_v5_evidence_boundaries() -> None:
+    """Project identity, ownership, current evidence, and negative results stay prominent."""
 
     readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
-    attribution = "Forked from jranaraki/vllm-tuner."
-    focus = (
-        "My work focuses on benchmark correctness, SLO-aware optimization, cross-layer "
-        "observability, reproducibility, and scheduling experiments."
-    )
+    compact_readme = " ".join(readme.split())
+    attribution = "forked from"
+    ownership = "What is original work"
     required = (
-        "# SLOTune",
+        "# SLOTune: artifact-backed vLLM long-context optimization",
         attribution,
-        focus,
+        ownership,
         "Javad Anaraki",
-        "My Contributions",
-        "| Area | SLOTune contribution | Code | Tests | Artifact or evidence | Commit |",
-        "src/vllm_tuner/benchmarks/sse_client.py",
-        "tests/unit/test_benchmark_sse_client.py",
-        "docs/METHODOLOGY.md#artifact-acceptance",
-        "aa9d70a",
-        "https://github.com/yihantianabc/vllm-tuner/commit/",
-        "ad36ee8e0e15a6d0502a35f9e794b056b9522a82",
-        "34a25a2e10951bfab1c2a86b4c60aff5bef785df",
-        "Qwen3-0.6B",
-        "smoke tests only",
-        "config/formal_3b_chat.yaml",
-        "config/formal_3b_rag.yaml",
-        "qwen25-3b-preflight-20260815-a",
+        "Qwen2.5-7B-Instruct",
+        "RTX 5090",
+        "KV Capacity Planner",
+        "Maximum absolute observed KV-block/concurrency error was **0.0446%**",
+        "decode-tail-1024",
+        "42.8% on the target trace and 42.9% on held-out",
+        "-0.027%/-0.014%",
+        "FP8 incompatibility",
+        "M4 selection stayed `production-default`",
+        "original M5 formal artifact",
+        "upstream vLLM APC",
+        "upstream vLLM Chunked Prefill",
+        "does **not** claim to have implemented APC",
+        "docs/results/longctx-v5.md",
+        "docs/CAREER_MATERIALS.md",
         "docs/results/qwen25-3b-34a25a2.md",
-        "docs/DEVELOPMENT_LOG.md",
-        "89 COMPLETE, 7 constraint-INFEASIBLE, 0 request failures",
-        "capacity is only a ≥27.883 req/s lower bound",
-        "15% goodput or 20% p99-TTFT improvement target",
-        "Limitations and future work",
+        "scripts/generate_longctx_v5_figures.py",
     )
     for text in required:
-        assert text in readme
-    assert readme.index(attribution) < readme.index(focus)
+        assert text in compact_readme
+    assert compact_readme.index(ownership) < compact_readme.index(attribution)
 
 
-def test_reproduction_guide_separates_evidence_tiers_and_records_formal_runs() -> None:
-    """Formal rows are complete without promoting historical, smoke, or simulator output."""
+def test_reproduction_guide_separates_audit_offline_and_fresh_gpu_paths() -> None:
+    """Reference roots stay read-only and FP8 incompatibility has no retry path."""
 
     reproduction = (REPOSITORY / "REPRODUCTION.md").read_text(encoding="utf-8")
     required = (
-        "legacy bring-up artifact",
-        "historical boundary",
-        "reproduction_gpu_20260815_a",
-        "smoke-ad36ee8-20260816",
-        "qwen25-3b-preflight-20260815-a",
-        "two-request default run",
+        "read-only audit",
+        "offline regeneration",
+        "fresh GPU reproduction",
         "./scripts/setup_data_disk_reproduction.sh",
-        "./scripts/run_data_disk_reproduction.sh slotune_smoke_001",
-        "./scripts/run_reproduction_command.sh tune",
-        "--config config/formal_3b_chat.yaml",
-        "--config config/formal_3b_rag.yaml",
-        "--trace /root/autodl-tmp/traces/chat-search.jsonl",
-        "/root/autodl-tmp/slotune-results/<study-name>",
-        "Current real-results register",
-        "Status: RECORDED AND AUDITED",
-        "qwen25-3b-chat-formal-34a25a2",
-        "qwen25-3b-rag-formal-34a25a2",
-        "48,000 measured requests per workload",
-        "8.0/8.029529/8.456300 req/s",
-        "4.0/4.254534/4.331800 req/s",
-        "0 request failures",
-        "run_reproduction_command.sh attest",
-        "experiment-integrity.json",
-        "summary.compact-v1.json",
-        "--reseal",
-        "7d704beea1890d14f7a411d677b867cdc8a06584a5040dbde2793f6723c8e191",
-        "7df0229c115ec0ce41cbc3c72624b13597b2a33d8f93a762242dbe723ca498b7",
+        "validate_m5_decode_tail_artifacts",
+        "scripts/generate_longctx_v5_figures.py",
+        "--config experiments/long_context/v5/m1-capacity-formal.yaml",
+        "--config experiments/long_context/v5/m3-apc-formal.yaml",
+        "--config experiments/long_context/v5/m4-chunked-formal.yaml",
+        "--config experiments/long_context/v5/m5-decode-tail-formal.yaml",
+        "longctx-v5-m5-decode-tail-formal-repro-001",
+        "vllm_tuner.longctx.m5_decode_tail_engineering",
+        "M2 is inspect-only on this stack",
+        "Do not launch `m2-fp8-formal.yaml`",
+        "Never point a fresh run or derived output at a reference root",
+        "The v2 command must report `GPU runs executed: 0`",
     )
     for text in required:
         assert text in reproduction
+    assert "run_longctx_m2_fp8.sh --config" not in reproduction
+
+
+def test_current_v5_result_and_career_materials_preserve_claim_boundaries() -> None:
+    """The public result and resume wording retain ownership and negative-result limits."""
+
+    result = (REPOSITORY / "docs/results/longctx-v5.md").read_text(encoding="utf-8")
+    career = (REPOSITORY / "docs/CAREER_MATERIALS.md").read_text(encoding="utf-8")
+    for text in (
+        "M2 — FP8 incompatibility is a result, not a missing chart",
+        "M4 — Chunked Prefill calibration kept production default",
+        "Original formal negative and versioned engineering analysis",
+        "42.834%",
+        "42.899%",
+        "2.625 MiB",
+        "APC and Chunked Prefill were used and analyzed; neither was authored",
+    ):
+        assert text in result
+    for text in (
+        "推荐简历成稿",
+        "独立设计并实现 KV Capacity Planner",
+        "使用 upstream 原生 Chunked Prefill",
+        "FP8 KV 不兼容",
+        "M4 的 production-default selection",
+        "不推荐的表述",
+    ):
+        assert text in career
+    for name in (
+        "longctx-v5-capacity-planner.png",
+        "longctx-v5-apc.png",
+        "longctx-v5-decode-tail.png",
+    ):
+        assert (REPOSITORY / "docs/results" / name).is_file()
 
 
 def test_reproduction_environment_is_locked_and_inherited_by_formal_commands() -> None:

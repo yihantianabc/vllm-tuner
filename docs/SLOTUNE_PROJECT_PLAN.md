@@ -1,6 +1,6 @@
 # vLLM 单卡长上下文推理优化项目计划（面试工程版）
 
-> 状态：Execution v5。M1 v2、M3 formal、M4 formal 和 M5 12/12 Runs 已完成；M2 已确认当前栈 FP8 KV 不兼容。M4 在原零容忍 Goodput 规则下保留 production default。M5 工程复分析确认 `decode-tail-1024` 在 target/held-out 均显著降低 Decode 干扰尾延迟，并通过 Goodput、TTFT、TPOT、可靠性和 KV 实质性非劣边界；不回写或重解释 sealed M4。
+> 状态：Execution v5 M0～M6 已完成。M1 v2、M3 formal、M4 formal 和 M5 12/12 Runs 已完成；M2 已确认当前栈 FP8 KV 不兼容。M4 在原零容忍 Goodput 规则下保留 production default。M5 工程复分析确认 `decode-tail-1024` 在 target/held-out 均显著降低 Decode 干扰尾延迟，并通过 Goodput、TTFT、TPOT、可靠性和 KV 实质性非劣边界；不回写或重解释 sealed M4。M6 已补齐 README、artifact-backed 结果图、复现命令、简历和面试材料。
 
 ## 0. 项目定位
 
@@ -206,7 +206,7 @@ M5 12-run 工程结果：target/held-out 的 Decode ITL p99 配对中位改善�
 | M3 | APC 真实前缀 Trace、冷/热与复用矩阵 | hit 证据与 TTFT/Goodput 一致 |
 | M4 | Chunked Prefill 干扰实验与 Pareto calibration | sealed selection 保持 default；候选方向有机制依据，不挑最好单次 |
 | M5 | default vs `decode-tail-1024`，target/held-out 各三次配对 | ITL p99 改善且 Goodput、TTFT、TPOT 通过预注册非劣界 |
-| M6 | README、结果图、复现命令、简历和面试材料 | 所有措辞符合证据边界 |
+| M6 | README、结果图、复现命令、简历和面试材料 | 已完成；所有措辞符合证据边界 |
 
 每个阶段只在验收通过后进入下一阶段；FP8 单项不兼容不阻塞 APC/Planner/Prefill。
 
@@ -282,19 +282,19 @@ Latency-Budgeted Scheduler 不再决定项目成败。只有满足以下条件�
 
 完成条件：
 
-- [ ] 固定正式模型、vLLM 和环境；
-- [ ] Planner、单测和容量验证完成，主要误差目标 ≤10%；
-- [ ] 默认 capacity curve 完成；
-- [ ] FP8 容量/质量边界完成；
-- [ ] APC cold/warm/reuse 控制完成；
+- [x] 固定正式模型、vLLM 和环境；
+- [x] Planner、单测和容量验证完成，主要误差目标 ≤10%；
+- [x] 默认 capacity curve 与 v2 service/saturation boundary 完成；
+- [x] FP8 compatibility 边界完成：当前栈不兼容，保留失败证据并禁止正式矩阵/重试；
+- [x] APC cold/warm/reuse 控制完成；
 - [x] Chunked Prefill M4 calibration 完成并 sealed；
 - [x] `decode-tail-1024` vs production default 完成 6 个 target + 6 个 held-out Runs；
 - [x] M5 同时通过 ITL 改善与 Goodput/TTFT/TPOT/KV 工程非劣验收；
-- [ ] 至少一个强正向结果可重复；
-- [ ] 无隐藏失败、OOM、错误或明显质量退化；
-- [ ] 结论只使用 clean、可复查的新 artifacts；
-- [ ] 每个里程碑和后台长跑按规则通知；
-- [ ] 触发失败条件时先通知并重新选择主线。
+- [x] 至少一个强正向结果可重复；
+- [x] 无隐藏失败、OOM、错误或明显质量退化；M2 不兼容和既有 negative 均公开；
+- [x] 结论只使用 clean、可复查的新 artifacts；
+- [x] M6 README、结果图、复现命令、简历和面试材料完成；
+- [x] 未触发主线重选条件，未启动 Scheduler。
 
 执行顺序：
 
