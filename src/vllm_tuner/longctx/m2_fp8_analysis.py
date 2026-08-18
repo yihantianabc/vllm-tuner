@@ -23,7 +23,9 @@ class M2FP8TrialRecord(StrictFrozenModel):
     """Semantically validated evidence from one independently sealed trial."""
 
     trial_id: str
-    profile_id: Literal["bf16-auto", "fp8-dynamic", "fp8-unit-fallback", "fp8-e5m2"]
+    profile_id: Literal[
+        "bf16-auto", "fp8-dynamic", "fp8-unit-fallback", "fp8-e5m2", "fp8-e5m2-triton"
+    ]
     context_id: str
     context_tokens: int = Field(gt=0)
     repeat_index: int = Field(ge=0, le=2)
@@ -34,8 +36,10 @@ class M2FP8TrialRecord(StrictFrozenModel):
     scale_source: Literal[
         "model-dtype", "dynamic-first-forward", "unit-fallback", "e5m2-unit-scale"
     ]
-    attention_backend: Literal["FLASH_ATTN", "FLASHINFER"]
-    backend_resolution: Literal["production-default", "automatic-fp8-fallback"]
+    attention_backend: Literal["FLASH_ATTN", "FLASHINFER", "TRITON_ATTN"]
+    backend_resolution: Literal[
+        "production-default", "automatic-fp8-fallback", "explicit-triton-fallback"
+    ]
     num_gpu_blocks: int = Field(gt=1)
     usable_num_gpu_blocks: int = Field(gt=0)
     block_size: int = Field(gt=0)
@@ -145,13 +149,13 @@ def analyze_m2_fp8_records(records: Sequence[M2FP8TrialRecord]) -> dict[str, obj
                 record.repeat_index
                 for record in records
                 if record.context_id == context_id
-                and record.profile_id in {"bf16-auto", "fp8-e5m2"}
+                and record.profile_id in {"bf16-auto", "fp8-e5m2-triton"}
             }
         )
         pairs: list[dict[str, object]] = []
         for repeat_index in repeat_indices:
             baseline = by_identity.get(("bf16-auto", context_id, repeat_index))
-            fp8 = by_identity.get(("fp8-e5m2", context_id, repeat_index))
+            fp8 = by_identity.get(("fp8-e5m2-triton", context_id, repeat_index))
             if baseline is None or fp8 is None:
                 continue
             pairs.append(

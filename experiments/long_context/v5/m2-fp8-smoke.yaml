@@ -30,12 +30,12 @@ profiles:
     scale_source: "model-dtype"
     expected_attention_backend: "FLASH_ATTN"
     backend_resolution: "production-default"
-  - profile_id: "fp8-e5m2"
+  - profile_id: "fp8-e5m2-triton"
     kv_cache_dtype: "fp8_e5m2"
     calculate_kv_scales: false
     scale_source: "e5m2-unit-scale"
-    expected_attention_backend: "FLASHINFER"
-    backend_resolution: "automatic-fp8-fallback"
+    expected_attention_backend: "TRITON_ATTN"
+    backend_resolution: "explicit-triton-fallback"
 
 contexts:
   - context_id: "context-8k"

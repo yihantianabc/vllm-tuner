@@ -22,8 +22,8 @@ m1_boundaries:
   root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m1-capacity-formal-001-boundaries-v2"
 
 smoke_artifact:
-  experiment_id: "longctx-v5-m2-fp8-smoke-003"
-  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m2-fp8-smoke-003"
+  experiment_id: "longctx-v5-m2-fp8-smoke-004"
+  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m2-fp8-smoke-004"
 
 profiles:
   - profile_id: "bf16-auto"
@@ -32,12 +32,12 @@ profiles:
     scale_source: "model-dtype"
     expected_attention_backend: "FLASH_ATTN"
     backend_resolution: "production-default"
-  - profile_id: "fp8-e5m2"
+  - profile_id: "fp8-e5m2-triton"
     kv_cache_dtype: "fp8_e5m2"
     calculate_kv_scales: false
     scale_source: "e5m2-unit-scale"
-    expected_attention_backend: "FLASHINFER"
-    backend_resolution: "automatic-fp8-fallback"
+    expected_attention_backend: "TRITON_ATTN"
+    backend_resolution: "explicit-triton-fallback"
 
 contexts:
   - context_id: "context-8k"

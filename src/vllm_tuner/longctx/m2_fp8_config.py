@@ -35,8 +35,8 @@ from .m1_capacity_integrity import validate_m1_capacity_artifacts
 from .m2_fp8_integrity import validate_m2_fp8_artifacts
 
 FORMAL_CONTEXT_TOKENS = frozenset({8_192, 16_384, 32_768})
-FORMAL_PROFILE_IDS = frozenset({"bf16-auto", "fp8-e5m2"})
-SMOKE_PROFILE_IDS = frozenset({"bf16-auto", "fp8-e5m2"})
+FORMAL_PROFILE_IDS = frozenset({"bf16-auto", "fp8-e5m2-triton"})
+SMOKE_PROFILE_IDS = frozenset({"bf16-auto", "fp8-e5m2-triton"})
 FORMAL_REPEATS = 3
 FORMAL_MEASUREMENT_SECONDS = 180
 FORMAL_MINIMUM_REQUESTS = 100
@@ -189,8 +189,10 @@ class M2FP8Profile(StrictFrozenModel):
     scale_source: Literal[
         "model-dtype", "dynamic-first-forward", "unit-fallback", "e5m2-unit-scale"
     ]
-    expected_attention_backend: Literal["FLASH_ATTN", "FLASHINFER"]
-    backend_resolution: Literal["production-default", "automatic-fp8-fallback"]
+    expected_attention_backend: Literal["FLASH_ATTN", "FLASHINFER", "TRITON_ATTN"]
+    backend_resolution: Literal[
+        "production-default", "automatic-fp8-fallback", "explicit-triton-fallback"
+    ]
 
     @field_validator("profile_id")
     @classmethod
@@ -230,6 +232,13 @@ class M2FP8Profile(StrictFrozenModel):
                 "FLASHINFER",
                 "automatic-fp8-fallback",
             ),
+            "fp8-e5m2-triton": (
+                "fp8_e5m2",
+                False,
+                "e5m2-unit-scale",
+                "TRITON_ATTN",
+                "explicit-triton-fallback",
+            ),
         }
         actual = (
             self.kv_cache_dtype,
@@ -249,6 +258,8 @@ class M2FP8Profile(StrictFrozenModel):
         arguments: dict[str, object] = {"kv-cache-dtype": self.kv_cache_dtype}
         if self.calculate_kv_scales:
             arguments["calculate-kv-scales"] = True
+        if self.backend_resolution == "explicit-triton-fallback":
+            arguments["attention-backend"] = "TRITON_ATTN"
         return arguments
 
 

@@ -273,10 +273,13 @@ def _command_evidence(trial_dir: Path, profile: M2FP8Profile) -> dict[str, Any]:
     calculate = argv.count("--calculate-kv-scales") == 1
     attention_override = option("--attention-backend")
     expected_kv = None if profile.profile_id == "bf16-auto" else profile.kv_cache_dtype
+    expected_attention = (
+        "TRITON_ATTN" if profile.backend_resolution == "explicit-triton-fallback" else None
+    )
     checks = {
         "kv_cache_dtype_argument_matches": kv_dtype == expected_kv,
         "calculate_kv_scales_argument_matches": calculate == profile.calculate_kv_scales,
-        "attention_backend_not_forced": attention_override is None,
+        "attention_backend_argument_matches": attention_override == expected_attention,
     }
     return {
         "argv": argv,
@@ -527,7 +530,7 @@ def _derive_record(
         "backend": {
             "resolved": startup.attention_backend,
             "resolution": profile.backend_resolution,
-            "attention_backend_forced": False,
+            "attention_backend_forced": profile.backend_resolution == "explicit-triton-fallback",
             "fp8_dtype_silently_fell_back": False,
         },
         "quality": quality_result,
@@ -1186,7 +1189,7 @@ class LongContextM2FP8Runner:
                 for record in records
                 if record.profile_id == "bf16-auto" and record.context_id == context_id
             ]
-            for candidate_id in ("fp8-e5m2",):
+            for candidate_id in ("fp8-e5m2-triton",):
                 candidates = [
                     record
                     for record in records
@@ -1325,10 +1328,10 @@ class LongContextM2FP8Runner:
         source_commit_after, source_tree_after = self._source_identity()
         source_stable = source_commit_after == source_commit and source_tree_after == source_tree
         profile_ids = {record.profile_id for record in records}
-        e5m2_unit_scale_observed = "fp8-e5m2" in profile_ids and all(
+        e5m2_unit_scale_observed = "fp8-e5m2-triton" in profile_ids and all(
             not record.calculate_kv_scales and record.scale_source == "e5m2-unit-scale"
             for record in records
-            if record.profile_id == "fp8-e5m2"
+            if record.profile_id == "fp8-e5m2-triton"
         )
         if self.config.evidence_role == "formal" and self.config.smoke_artifact is not None:
             smoke_summary = self.config.smoke_artifact.summary()
@@ -1352,8 +1355,8 @@ class LongContextM2FP8Runner:
             "e5m2_unit_scale_observed": e5m2_unit_scale_observed,
             "fp8_backend_fallback_explicit": bool(records)
             and all(
-                record.attention_backend == "FLASHINFER"
-                and record.backend_resolution == "automatic-fp8-fallback"
+                record.attention_backend == "TRITON_ATTN"
+                and record.backend_resolution == "explicit-triton-fallback"
                 for record in records
                 if record.profile_id.startswith("fp8-")
             ),
@@ -1409,12 +1412,13 @@ class LongContextM2FP8Runner:
                 "formal_scale_source": "e5m2-unit-scale",
                 "e4m3_dynamic_quality_compatible": False,
                 "e4m3_unit_fallback_quality_compatible": False,
+                "flashinfer_e5m2_quality_compatible": False,
                 "e4m3_used_in_formal": False,
             },
             "backend_boundary": {
                 "bf16": "FLASH_ATTN production default",
-                "fp8": "automatic FLASHINFER fallback on RTX 5090",
-                "attention_backend_forced": False,
+                "fp8": "explicit TRITON_ATTN fallback after FlashInfer quality failure",
+                "fp8_attention_backend_forced": True,
                 "latency_comparison_backend_confounded": True,
             },
             "resume": {
