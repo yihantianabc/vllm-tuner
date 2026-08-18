@@ -41,16 +41,16 @@ profiles:
     max_num_partial_prefills: null
     max_long_partial_prefills: null
     long_prefill_token_threshold: null
-  - profile_id: "native-chunk-1024"
-    max_num_batched_tokens: 1024
-    max_num_partial_prefills: 2
-    max_long_partial_prefills: 1
-    long_prefill_token_threshold: 2048
-  - profile_id: "native-chunk-512"
-    max_num_batched_tokens: 512
-    max_num_partial_prefills: 2
-    max_long_partial_prefills: 1
-    long_prefill_token_threshold: 2048
+  - profile_id: "native-threshold-1024"
+    max_num_batched_tokens: null
+    max_num_partial_prefills: null
+    max_long_partial_prefills: null
+    long_prefill_token_threshold: 1024
+  - profile_id: "native-threshold-512"
+    max_num_batched_tokens: null
+    max_num_partial_prefills: null
+    max_long_partial_prefills: null
+    long_prefill_token_threshold: 512
 
 slo:
   ttft_ms: 3500.0

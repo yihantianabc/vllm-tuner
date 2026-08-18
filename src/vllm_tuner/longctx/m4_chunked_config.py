@@ -37,8 +37,8 @@ from .m3_apc_integrity import M3_APC_INTEGRITY_FILE, validate_m3_apc_artifacts
 
 FORMAL_PROFILE_IDS = (
     "production-default",
-    "native-chunk-1024",
-    "native-chunk-512",
+    "native-threshold-1024",
+    "native-threshold-512",
 )
 FORMAL_LONG_PREFILL_TOKENS = (4_096, 8_192)
 FORMAL_REPEATS = 3
@@ -195,8 +195,8 @@ class M4ChunkedProfile(StrictFrozenModel):
     def validate_semantics(self) -> "M4ChunkedProfile":
         expected: dict[str, tuple[Optional[int], Optional[int], Optional[int], Optional[int]]] = {
             "production-default": (None, None, None, None),
-            "native-chunk-1024": (1_024, 2, 1, 2_048),
-            "native-chunk-512": (512, 2, 1, 2_048),
+            "native-threshold-1024": (None, None, None, 1_024),
+            "native-threshold-512": (None, None, None, 512),
         }
         actual = (
             self.max_num_batched_tokens,
@@ -219,16 +219,10 @@ class M4ChunkedProfile(StrictFrozenModel):
     def vllm_args(self) -> dict[str, object]:
         if self.production_default:
             return {}
-        assert self.max_num_batched_tokens is not None
-        assert self.max_num_partial_prefills is not None
-        assert self.max_long_partial_prefills is not None
         assert self.long_prefill_token_threshold is not None
         return {
             "enable-chunked-prefill": True,
             "long-prefill-token-threshold": self.long_prefill_token_threshold,
-            "max-long-partial-prefills": self.max_long_partial_prefills,
-            "max-num-batched-tokens": self.max_num_batched_tokens,
-            "max-num-partial-prefills": self.max_num_partial_prefills,
         }
 
 

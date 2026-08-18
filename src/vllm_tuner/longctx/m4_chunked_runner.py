@@ -225,13 +225,14 @@ def _command_evidence(
         "--max-num-partial-prefills",
     }
     observed_chunk_flags = {item.split("=", 1)[0] for item in argv} & chunk_flags
-    expected_flags = set() if profile.production_default else chunk_flags
+    expected_flags = (
+        set()
+        if profile.production_default
+        else {"--enable-chunked-prefill", "--long-prefill-token-threshold"}
+    )
     expected_values = {
         "--enable-chunked-prefill": "true",
         "--long-prefill-token-threshold": str(profile.long_prefill_token_threshold),
-        "--max-long-partial-prefills": str(profile.max_long_partial_prefills),
-        "--max-num-batched-tokens": str(profile.max_num_batched_tokens),
-        "--max-num-partial-prefills": str(profile.max_num_partial_prefills),
     }
     values_match = profile.production_default or all(
         _argv_option(argv, flag) == value for flag, value in expected_values.items()
@@ -260,7 +261,8 @@ def _command_evidence(
     if partial_match is None:
         resolved_partial = 1
         resolved_long_partial = 1
-        resolved_threshold = 0
+        threshold_match = re.search(r"'long_prefill_token_threshold': (\d+)", server_log)
+        resolved_threshold = int(threshold_match.group(1)) if threshold_match else 0
     else:
         resolved_partial, resolved_long_partial, resolved_threshold = (
             int(partial_match.group(index)) for index in (1, 2, 3)
@@ -1232,7 +1234,7 @@ class LongContextM4ChunkedRunner:
         selection_ready = (
             isinstance(selection, Mapping)
             and selection.get("profile_id")
-            in {"production-default", "native-chunk-1024", "native-chunk-512"}
+            in {"production-default", "native-threshold-1024", "native-threshold-512"}
             and selection.get("single_run_selection_used") is False
         )
         checks = {

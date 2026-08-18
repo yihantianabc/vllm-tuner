@@ -44,14 +44,14 @@ class M4TrialRecord(StrictFrozenModel):
     trial_id: str
     profile_id: Literal[
         "production-default",
-        "native-chunk-1024",
-        "native-chunk-512",
+        "native-threshold-1024",
+        "native-threshold-512",
     ]
     production_default: bool
     max_num_batched_tokens: Literal[512, 1024, 2048]
-    max_num_partial_prefills: Literal[1, 2]
+    max_num_partial_prefills: Literal[1]
     max_long_partial_prefills: Literal[1]
-    long_prefill_token_threshold: Literal[0, 2048]
+    long_prefill_token_threshold: Literal[0, 512, 1024]
     long_prefill_tokens: Literal[4096, 8192]
     repeat_index: int = Field(ge=0, le=2)
     trace_id: str
@@ -142,7 +142,7 @@ def analyze_m4_records(
         (record.profile_id, record.long_prefill_tokens, record.repeat_index): record
         for record in records
     }
-    candidates = ("native-chunk-1024", "native-chunk-512")
+    candidates = ("native-threshold-1024", "native-threshold-512")
     paired: list[dict[str, object]] = []
     candidate_pool_changes: dict[str, list[float]] = defaultdict(list)
     candidate_eligible: dict[str, bool] = {candidate: True for candidate in candidates}
@@ -214,7 +214,9 @@ def analyze_m4_records(
                 }
             )
 
-    eligible = [candidate for candidate in candidates if candidate_eligible[candidate]]
+    eligible = (
+        [candidate for candidate in candidates if candidate_eligible[candidate]] if formal else []
+    )
     if not formal:
         selected_profile = "production-default"
         reason = "smoke validates the path and does not select a formal profile"

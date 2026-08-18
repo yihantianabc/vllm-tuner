@@ -48,28 +48,19 @@ def _protocol() -> M4Protocol:
 def test_profiles_are_minimal_native_chunked_prefill_only() -> None:
     default = M4ChunkedProfile(profile_id="production-default")
     one_k = M4ChunkedProfile(
-        profile_id="native-chunk-1024",
-        max_num_batched_tokens=1024,
-        max_num_partial_prefills=2,
-        max_long_partial_prefills=1,
-        long_prefill_token_threshold=2048,
+        profile_id="native-threshold-1024",
+        long_prefill_token_threshold=1024,
     )
     half_k = M4ChunkedProfile(
-        profile_id="native-chunk-512",
-        max_num_batched_tokens=512,
-        max_num_partial_prefills=2,
-        max_long_partial_prefills=1,
-        long_prefill_token_threshold=2048,
+        profile_id="native-threshold-512",
+        long_prefill_token_threshold=512,
     )
     assert default.vllm_args() == {}
     assert one_k.vllm_args() == {
         "enable-chunked-prefill": True,
-        "long-prefill-token-threshold": 2048,
-        "max-long-partial-prefills": 1,
-        "max-num-batched-tokens": 1024,
-        "max-num-partial-prefills": 2,
+        "long-prefill-token-threshold": 1024,
     }
-    assert half_k.vllm_args()["max-num-batched-tokens"] == 512
+    assert half_k.vllm_args()["long-prefill-token-threshold"] == 512
     assert all("scheduler" not in name and "kv-cache" not in name for name in one_k.vllm_args())
 
 
@@ -116,11 +107,13 @@ def _record(
     interference: float,
     goodput: float,
 ) -> M4TrialRecord:
-    budget = {"production-default": 2048, "native-chunk-1024": 1024, "native-chunk-512": 512}[
-        profile
-    ]
-    partial = 1 if profile == "production-default" else 2
-    threshold = 0 if profile == "production-default" else 2048
+    budget = 2048
+    partial = 1
+    threshold = {
+        "production-default": 0,
+        "native-threshold-1024": 1024,
+        "native-threshold-512": 512,
+    }[profile]
     usage = M4ResourceUsage(sample_count=2, minimum=0.0, median=0.1, p95=0.2, maximum=0.2)
     return M4TrialRecord(
         trial_id=f"{profile}-{long_tokens}-{repeat}",
@@ -176,13 +169,15 @@ def test_formal_selection_uses_majorities_not_best_single_run() -> None:
     for long_tokens in (4096, 8192):
         for repeat in range(3):
             records.append(_record("production-default", long_tokens, repeat, 100.0, 0.60))
-            records.append(_record("native-chunk-1024", long_tokens, repeat, 80.0, 0.60))
+            records.append(_record("native-threshold-1024", long_tokens, repeat, 80.0, 0.60))
             # One excellent run cannot rescue two regressions.
             interference = 50.0 if repeat == 0 else 120.0
             goodput = 0.61 if repeat == 0 else 0.59
-            records.append(_record("native-chunk-512", long_tokens, repeat, interference, goodput))
+            records.append(
+                _record("native-threshold-512", long_tokens, repeat, interference, goodput)
+            )
     analysis = analyze_m4_records(records, formal=True)
     selection = analysis["selection"]
-    assert selection["profile_id"] == "native-chunk-1024"
+    assert selection["profile_id"] == "native-threshold-1024"
     assert selection["single_run_selection_used"] is False
-    assert selection["candidate_eligibility"]["native-chunk-512"] is False
+    assert selection["candidate_eligibility"]["native-threshold-512"] is False
