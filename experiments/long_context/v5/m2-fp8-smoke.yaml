@@ -1,0 +1,70 @@
+project_line: "longctx-v5"
+milestone: "M2"
+experiment_kind: "fp8-kv-cache"
+evidence_role: "smoke"
+
+model:
+  local_path: "/root/autodl-tmp/models/Qwen2.5-7B-Instruct"
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/qwen25-7b-instruct.model.lock.yaml"
+
+runtime:
+  lock_path: "/root/autodl-tmp/vllm-tuner/experiments/long_context/v5/upstream-runtime.lock.yaml"
+
+artifacts:
+  root: "/root/autodl-tmp/longctx-v5-artifacts"
+
+gpu:
+  device_ids: [0]
+  count: 1
+
+m1_boundaries:
+  experiment_id: "longctx-v5-m1-capacity-formal-001-boundaries-v2"
+  root: "/root/autodl-tmp/longctx-v5-artifacts/longctx-v5-m1-capacity-formal-001-boundaries-v2"
+
+smoke_artifact: null
+
+profiles:
+  - profile_id: "bf16-auto"
+    kv_cache_dtype: "auto"
+    calculate_kv_scales: false
+    scale_source: "model-dtype"
+    expected_attention_backend: "FLASH_ATTN"
+    backend_resolution: "production-default"
+  - profile_id: "fp8-dynamic"
+    kv_cache_dtype: "fp8"
+    calculate_kv_scales: true
+    scale_source: "dynamic-first-forward"
+    expected_attention_backend: "FLASHINFER"
+    backend_resolution: "automatic-fp8-fallback"
+  - profile_id: "fp8-unit-fallback"
+    kv_cache_dtype: "fp8"
+    calculate_kv_scales: false
+    scale_source: "unit-fallback"
+    expected_attention_backend: "FLASHINFER"
+    backend_resolution: "automatic-fp8-fallback"
+
+contexts:
+  - context_id: "context-8k"
+    total_kv_tokens: 8192
+    output_tokens: 128
+    load_id: "mid"
+    offered_requests_per_second: 1.0
+    slo:
+      ttft_ms: 3500.0
+      tpot_ms: 120.0
+      e2e_ms: 16000.0
+      max_error_rate_ppm: 0
+
+protocol:
+  repeats: 1
+  measurement_seconds: 3
+  minimum_measured_requests: 4
+  quality_probe_count: 4
+  quality_output_tokens: 32
+  quality_seed: 2026081831
+  measurement_seed: 2026081832
+  quality_prompt_index_offset: 2000000
+  client_max_concurrency: 8
+  request_timeout_seconds: 600.0
+  burstiness: 1.0
+  ignore_eos: true
