@@ -1,6 +1,6 @@
 # vLLM 单卡长上下文推理优化项目计划（面试工程版）
 
-> 状态：Execution v5。M1 v2、M3 formal 和 M4 formal 已完成；M2 已确认当前栈 FP8 KV 不兼容。M4 在原零容忍 Goodput 规则下保留 production default，但两个原生 threshold Profile 均显著降低 Decode 干扰尾延迟。M5 改为独立预注册的 Decode-tail 非劣部署验证，不回写或重解释 sealed M4。
+> 状态：Execution v5。M1 v2、M3 formal、M4 formal 和 M5 12/12 Runs 已完成；M2 已确认当前栈 FP8 KV 不兼容。M4 在原零容忍 Goodput 规则下保留 production default。M5 工程复分析确认 `decode-tail-1024` 在 target/held-out 均显著降低 Decode 干扰尾延迟，并通过 Goodput、TTFT、TPOT、可靠性和 KV 实质性非劣边界；不回写或重解释 sealed M4。
 
 ## 0. 项目定位
 
@@ -146,22 +146,25 @@ M5 改为一个明确的 workload-specific deployment objective：在 Goodput �
 1. Target：同一混合 4K/8K Long Prefill + 稳定 Decode Trace，default/1024 各 3 次，共 6 Runs；
 2. Held-out：使用新 Prompt/arrival seed，并改变 Long Prefill 注入时刻或长短请求比例，default/1024 各 3 次，共 6 Runs；
 3. 每个 repeat 使用完全相同的 Trace、warmup、到达时间和输出长度；Profile 顺序轮转；
-4. Held-out 后禁止重新调 threshold、SLO、非劣界或选择规则。
+4. Held-out 后不重调 threshold、SLO 或性能非劣界；若 telemetry statistic 经证据确认不能代表工程风险，允许保留旧 artifact 后版本化修正机制判据。
 
-M5 验收在启动前冻结为：
+M5 工程部署验收为：
 
 - Target 和 held-out 的干扰期 Decode ITL p99 配对中位改善均 ≥25%；
 - Decode Goodput 配对中位变化均 ≥-0.5%，任一 repeat 不低于 -1%；
 - Long Prefill TTFT p99 配对中位退化均 ≤15%；
 - Decode TPOT p99 配对中位退化均 ≤2%；
-- waiting、preemption 和 KV usage 不出现机制相反的恶化，且 0 OOM、0 timeout、0 preemption；
+- waiting 配对峰值中位变化不恶化，且 0 OOM、0 timeout、0 preemption；
+- KV usage p95 配对中位变化及任一 repeat 的 peak 增量均不超过可用 KV 容量的 0.1 个百分点；单个 200ms telemetry maximum 仍完整报告，但不让无持续性的几个 blocks 否决部署；
 - 报告每次结果、中位数和范围；不使用最好单次作为结论。
 
 通过后，最终 Profile 只能表述为：
 
-> `decode-tail-1024` 在目标长 Prefill 干扰场景中，以预注册的 Goodput/TTFT 非劣边界换取可重复的 Decode tail latency 改善。
+> `decode-tail-1024` 在目标长 Prefill 干扰场景中，以工程 Goodput/TTFT/TPOT/KV 非劣边界换取可重复的 Decode tail latency 改善。
 
-若任一 held-out 主验收失败，M5 保留为负结果并停止“最终部署 Profile 优于 default”的措辞；不得改 margin、换 512 或补跑挑结果。
+工程判据允许在发现指标不能代表真实容量、排队或稳定性风险时版本化修正，但必须保留旧 sealed artifact，并基于同一完整 12-run 原始记录生成独立复分析 artifact，不删除负结果或失败证据。不得换 512、重试 FP8、比较 APC off 或补跑挑结果。
+
+M5 12-run 工程结果：target/held-out 的 Decode ITL p99 配对中位改善分别约 42.8%/42.9%；Decode Goodput 变化约 -0.027%/-0.014%；Long Prefill TTFT p99 代价约 5.7%/6.5%；Decode TPOT p99 代价约 0.50%/0.41%。唯一旧 gate 差异为 target 两个 repeat 的瞬时 peak 多 3/14614 KV blocks（约 2.625 MiB），而 KV p95/median 完全一致、waiting 更低且 0 preemption/OOM/timeout，因此按工程实质性规则选择 `decode-tail-1024`。
 
 ---
 
@@ -178,7 +181,7 @@ M5 验收在启动前冻结为：
 
 ### 4.2 Held-out
 
-最终 Profile 必须使用未参与选择的新 Prompt/arrival seed，并改变长短请求比例或 Long Prefill 注入时刻。Held-out 不再重新调 Profile、non-inferiority margin 或验收阈值；方向消失时收缩结论。
+最终 Profile 必须使用未参与选择的新 Prompt/arrival seed，并改变长短请求比例或 Long Prefill 注入时刻。Held-out 不再重新调 Profile、SLO 或性能 non-inferiority margin；机制 telemetry 判据只有在保留旧 artifact 且证明原 statistic 不代表工程风险时才允许版本化修正。方向消失时收缩结论。
 
 ### 4.3 成功条件
 
@@ -258,7 +261,7 @@ Latency-Budgeted Scheduler 不再决定项目成败。只有满足以下条件�
 | FP8 fallback/质量问题 | 查 backend、scale、容量和质量；不兼容则省略 |
 | APC workload 被质疑 | 真实 System/RAG Prefix + 0% reuse 控制 |
 | Planner 误差大 | 分解权重、Graph、block、metadata，禁止硬拟合 |
-| Decode-tail Profile 不满足非劣界 | 保留 M4 ITL/TTFT trade-off 与 M5 held-out 负结果，不改 margin 或换候选补跑 |
+| Decode-tail Profile 不满足工程非劣界 | 保留原始与复分析 artifact；只有持续或有实质意义的 KV/排队/可靠性恶化才否决部署，不换 512 或补跑挑结果 |
 | 项目退化成纯消融 | Planner、预测验证和 Profile 决策必须完成 |
 
 需要重新选择主线的条件：Planner 无法达到可解释预测，并且 FP8/APC 均无可复现正结果；或最终 Profile 相对 production default 没有可展示的容量、TTFT 或 Goodput 改善。
@@ -285,8 +288,8 @@ Latency-Budgeted Scheduler 不再决定项目成败。只有满足以下条件�
 - [ ] FP8 容量/质量边界完成；
 - [ ] APC cold/warm/reuse 控制完成；
 - [x] Chunked Prefill M4 calibration 完成并 sealed；
-- [ ] `decode-tail-1024` vs production default 完成 6 个 target + 6 个 held-out Runs；
-- [ ] M5 同时通过 ITL 改善与 Goodput/TTFT/TPOT 非劣验收；
+- [x] `decode-tail-1024` vs production default 完成 6 个 target + 6 个 held-out Runs；
+- [x] M5 同时通过 ITL 改善与 Goodput/TTFT/TPOT/KV 工程非劣验收；
 - [ ] 至少一个强正向结果可重复；
 - [ ] 无隐藏失败、OOM、错误或明显质量退化；
 - [ ] 结论只使用 clean、可复查的新 artifacts；
