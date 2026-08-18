@@ -30,16 +30,10 @@ profiles:
     scale_source: "model-dtype"
     expected_attention_backend: "FLASH_ATTN"
     backend_resolution: "production-default"
-  - profile_id: "fp8-dynamic"
-    kv_cache_dtype: "fp8"
-    calculate_kv_scales: true
-    scale_source: "dynamic-first-forward"
-    expected_attention_backend: "FLASHINFER"
-    backend_resolution: "automatic-fp8-fallback"
-  - profile_id: "fp8-unit-fallback"
-    kv_cache_dtype: "fp8"
+  - profile_id: "fp8-e5m2"
+    kv_cache_dtype: "fp8_e5m2"
     calculate_kv_scales: false
-    scale_source: "unit-fallback"
+    scale_source: "e5m2-unit-scale"
     expected_attention_backend: "FLASHINFER"
     backend_resolution: "automatic-fp8-fallback"
 

@@ -272,7 +272,7 @@ def _command_evidence(trial_dir: Path, profile: M2FP8Profile) -> dict[str, Any]:
     kv_dtype = option("--kv-cache-dtype")
     calculate = argv.count("--calculate-kv-scales") == 1
     attention_override = option("--attention-backend")
-    expected_kv = None if profile.profile_id == "bf16-auto" else "fp8"
+    expected_kv = None if profile.profile_id == "bf16-auto" else profile.kv_cache_dtype
     checks = {
         "kv_cache_dtype_argument_matches": kv_dtype == expected_kv,
         "calculate_kv_scales_argument_matches": calculate == profile.calculate_kv_scales,
@@ -515,7 +515,11 @@ def _derive_record(
                 else (
                     "not applicable: model dtype KV cache"
                     if profile.kv_cache_dtype == "auto"
-                    else "1.0 fallback from absent checkpoint scales in locked vLLM 0.16"
+                    else (
+                        "explicit E5M2 unit scale with no checkpoint scales"
+                        if profile.kv_cache_dtype == "fp8_e5m2"
+                        else "1.0 fallback from absent checkpoint scales in locked vLLM 0.16"
+                    )
                 )
             ),
             "silent_scale_fallback": False,
@@ -1182,7 +1186,7 @@ class LongContextM2FP8Runner:
                 for record in records
                 if record.profile_id == "bf16-auto" and record.context_id == context_id
             ]
-            for candidate_id in ("fp8-dynamic", "fp8-unit-fallback"):
+            for candidate_id in ("fp8-e5m2",):
                 candidates = [
                     record
                     for record in records
@@ -1321,34 +1325,13 @@ class LongContextM2FP8Runner:
         source_commit_after, source_tree_after = self._source_identity()
         source_stable = source_commit_after == source_commit and source_tree_after == source_tree
         profile_ids = {record.profile_id for record in records}
-        scale_checks = {
-            "dynamic_scale_observed": "fp8-dynamic" in profile_ids
-            and all(
-                record.calculate_kv_scales and record.scale_source == "dynamic-first-forward"
-                for record in records
-                if record.profile_id == "fp8-dynamic"
-            ),
-            "unit_fallback_classified": (
-                "fp8-unit-fallback" in profile_ids
-                and all(
-                    not record.calculate_kv_scales and record.scale_source == "unit-fallback"
-                    for record in records
-                    if record.profile_id == "fp8-unit-fallback"
-                )
-            ),
-        }
+        e5m2_unit_scale_observed = "fp8-e5m2" in profile_ids and all(
+            not record.calculate_kv_scales and record.scale_source == "e5m2-unit-scale"
+            for record in records
+            if record.profile_id == "fp8-e5m2"
+        )
         if self.config.evidence_role == "formal" and self.config.smoke_artifact is not None:
             smoke_summary = self.config.smoke_artifact.summary()
-            smoke_checks = _read_json(self.config.smoke_artifact.root / SUMMARY_FILE).get(
-                "acceptance", {}
-            )
-            scale_checks["unit_fallback_classified"] = (
-                isinstance(smoke_checks, Mapping)
-                and cast(Mapping[str, Any], smoke_checks)
-                .get("checks", {})
-                .get("unit_fallback_classified")
-                is True
-            )
             bound_smoke_passed = (
                 isinstance(smoke_summary.get("acceptance"), Mapping)
                 and cast(Mapping[str, Any], smoke_summary["acceptance"]).get("passed") is True
@@ -1366,8 +1349,7 @@ class LongContextM2FP8Runner:
             "quality_all_passed": bool(records)
             and all(record.quality_passed for record in records),
             "checkpoint_has_no_scale_keys": not self._checkpoint_scale_keys,
-            "dynamic_scale_observed": scale_checks["dynamic_scale_observed"],
-            "unit_fallback_classified": scale_checks["unit_fallback_classified"],
+            "e5m2_unit_scale_observed": e5m2_unit_scale_observed,
             "fp8_backend_fallback_explicit": bool(records)
             and all(
                 record.attention_backend == "FLASHINFER"
@@ -1424,9 +1406,10 @@ class LongContextM2FP8Runner:
             "records": [record.model_dump(mode="json") for record in records],
             "scale_boundary": {
                 "checkpoint_scale_keys": self._checkpoint_scale_keys,
-                "formal_scale_source": "dynamic-first-forward",
-                "fallback_scale_source": "unit-fallback-smoke-only",
-                "unit_fallback_used_in_formal": False,
+                "formal_scale_source": "e5m2-unit-scale",
+                "e4m3_dynamic_quality_compatible": False,
+                "e4m3_unit_fallback_quality_compatible": False,
+                "e4m3_used_in_formal": False,
             },
             "backend_boundary": {
                 "bf16": "FLASH_ATTN production default",
